@@ -1,7 +1,7 @@
 name: Unpack app.zip
 on:
-    workflow_dispatch:
-    push:
+  workflow_dispatch:
+  push:
     branches: [main]
     paths: ["app.zip"]
 permissions:
@@ -13,7 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Replace source with contents of app.zip
         run: |
-          rm -rf src prisma public tests Dockerfile railway.json
+          if [ ! -f app.zip ]; then echo "No app.zip in the repo - nothing to do"; exit 0; fi
+          rm -rf src prisma public tests Dockerfile railway.json unpack.yml
           unzip -o -q app.zip -d .
           rm app.zip
           git config user.name "github-actions[bot]"
