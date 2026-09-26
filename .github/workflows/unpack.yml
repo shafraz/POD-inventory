@@ -1,0 +1,22 @@
+name: Unpack app.zip
+on:
+  push:
+    branches: [main]
+    paths: ["app.zip"]
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace source with contents of app.zip
+        run: |
+          rm -rf src prisma public tests Dockerfile railway.json
+          unzip -o -q app.zip -d .
+          rm app.zip
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Unpack app.zip" || echo "Nothing to commit"
+          git push
