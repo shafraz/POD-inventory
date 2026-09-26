@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mpl_inventory
+      POSTGRES_USER: mpl_inventory
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mpl_inventory"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://mpl_inventory:${DB_PASSWORD:-change-me}@db:5432/mpl_inventory?schema=public
+      SESSION_IDLE_MINUTES: 60
+      SESSION_MAX_HOURS: 12
+      APP_TIMEZONE: Indian/Maldives
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@mpl.mv}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMe@2026}
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-false}
+
+volumes:
+  pgdata:

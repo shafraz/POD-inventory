@@ -1,0 +1,548 @@
+// MPL Asset Inventory & Equipment Management System
+// PostgreSQL schema (Prisma ORM)
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "queryCompiler"]
+  engineType      = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  INVENTORY_OFFICER
+  OPERATIONS_USER
+  VIEWER
+}
+
+/// System-level meaning of a status. Business rules key off this code,
+/// never off the (admin-editable) display name.
+enum StatusCode {
+  IN_USE
+  IN_STOCK
+  UNDER_REPAIR
+  DAMAGED
+  UNVERIFIED
+  NOT_IN_USE
+  DISPOSED
+  LOST
+  CUSTOM
+}
+
+enum MovementAction {
+  ISSUE
+  RETURN
+  TRANSFER
+  REPAIR_OUT
+  REPAIR_IN
+  MARK_DAMAGED
+  VERIFIED
+  DISPOSE
+  MARK_LOST
+  OS_UPDATE
+  STATUS_CHANGE
+  REGISTERED
+}
+
+enum RepairStatus {
+  OPEN
+  COMPLETED
+  NOT_REPAIRABLE
+}
+
+enum DamageSeverity {
+  MINOR
+  MODERATE
+  MAJOR
+  CRITICAL
+}
+
+enum VerificationResult {
+  VERIFIED
+  DISCREPANCY
+  NOT_FOUND
+}
+
+enum RequestType {
+  ISSUE
+  TRANSFER
+  RETURN
+  REPAIR
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LookupCategory {
+  CONDITION
+  DEPARTMENT
+  SHIFT
+  SIM_OPERATOR
+  BRAND
+}
+
+enum RecordSource {
+  APP
+  IMPORT
+}
+
+enum ImportStatus {
+  STAGED
+  COMMITTED
+  DISCARDED
+}
+
+// ─────────────────────────────────────────────────────────────
+// Identity & sessions
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  username     String?   @unique
+  passwordHash String    @map("password_hash")
+  role         Role      @default(VIEWER)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  sessions          Session[]
+  auditLogs         AuditLog[]
+  movements         Movement[]         @relation("MovementRecordedBy")
+  notificationReads NotificationRead[]
+  requests          AssetRequest[]     @relation("RequestedBy")
+  reviewedRequests  AssetRequest[]     @relation("ReviewedBy")
+
+  @@map("users")
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique @map("token_hash")
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime @map("expires_at")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reference data (all admin-managed, nothing hard-coded)
+// ─────────────────────────────────────────────────────────────
+
+model AssetType {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  prefix      String   @unique
+  description String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  /// Per-type UI configuration:
+  /// { labels?: { deviceName?: string, inventoryNumber?: string, ... },
+  ///   identifier?: "imei" | "serial",
+  ///   hasSim?: boolean, hasOs?: boolean,
+  ///   extraFields?: [{ key, label, type: "text"|"number"|"select"|"date", options?: string[] }] }
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@map("asset_types")
+}
+
+model Location {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  /// Alternative spellings used for import normalisation (e.g. "C-Yard", "C Yard")
+  aliases     String[] @default([])
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@map("locations")
+}
+
+model Status {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      StatusCode @default(CUSTOM)
+  /// Badge colour token: green | blue | orange | red | purple | gray | dark | yellow | teal
+  color     String     @default("gray")
+  active    Boolean    @default(true)
+  sortOrder Int        @default(0) @map("sort_order")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@map("statuses")
+}
+
+/// Generic admin-managed option lists (conditions, departments, shifts, SIM operators, brands)
+model LookupValue {
+  id        String         @id @default(cuid())
+  category  LookupCategory
+  value     String
+  active    Boolean        @default(true)
+  sortOrder Int            @default(0) @map("sort_order")
+
+  @@unique([category, value])
+  @@map("lookup_values")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Staff — people who receive and return devices (not system users)
+// ─────────────────────────────────────────────────────────────
+
+model Staff {
+  id             String   @id @default(cuid())
+  employeeNumber String   @unique @map("employee_number")
+  name           String
+  designation    String?
+  shift          String?
+  department     String?
+  phone          String?
+  notes          String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  assets    Asset[]
+  movements Movement[]
+
+  @@index([name])
+  @@map("staff")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Assets — the register always holds CURRENT state
+// ─────────────────────────────────────────────────────────────
+
+model Asset {
+  id                   String    @id @default(cuid())
+  assetId              String    @unique @map("asset_id")
+  assetTypeId          String    @map("asset_type_id")
+  assetType            AssetType @relation(fields: [assetTypeId], references: [id])
+  deviceName           String?   @map("device_name")
+  brand                String?
+  model                String?
+  serialNumber         String?   @map("serial_number")
+  imei                 String?
+  inventoryNumber      String?   @map("inventory_number")
+  assetNumber          String?   @map("asset_number")
+  alternateReference   String?   @map("alternate_reference")
+  simNumber            String?   @map("sim_number")
+  simOperator          String?   @map("sim_operator")
+  locationId           String?   @map("location_id")
+  location             Location? @relation(fields: [locationId], references: [id])
+  /// Staff member currently holding the asset (null when assigned to a unit/shift or in stock)
+  staffId              String?   @map("staff_id")
+  staff                Staff?    @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  assignedTo           String?   @map("assigned_to")
+  department           String?
+  shift                String?
+  statusId             String    @map("status_id")
+  status               Status    @relation(fields: [statusId], references: [id])
+  condition            String?
+  receivedDate         DateTime? @map("received_date") @db.Date
+  issuedDate           DateTime? @map("issued_date") @db.Date
+  lastServiceDate      DateTime? @map("last_service_date") @db.Date
+  lastVerificationDate DateTime? @map("last_verification_date") @db.Date
+  nextVerificationDate DateTime? @map("next_verification_date") @db.Date
+  lastOsUpdate         DateTime? @map("last_os_update") @db.Date
+  osVersion            String?   @map("os_version")
+  remarks              String?
+  /// Type-specific extra fields (see AssetType.config.extraFields)
+  attributes           Json      @default("{}")
+  /// Migration flags — uncertain legacy records are kept but flagged
+  needsReview          Boolean   @default(false) @map("needs_review")
+  reviewNotes          String?   @map("review_notes")
+  source               RecordSource @default(APP)
+  sourceRef            String?   @map("source_ref")
+  /// Raw legacy values preserved verbatim from the Excel import
+  legacyData           Json?     @map("legacy_data")
+  archived             Boolean   @default(false)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  movements     Movement[]
+  repairs       Repair[]
+  verifications Verification[]
+  damageReports DamageReport[]
+  osUpdates     OsUpdate[]
+  auditLogs     AuditLog[]
+  attachments   Attachment[]
+  requests      AssetRequest[]
+
+  @@index([assetTypeId])
+  @@index([locationId])
+  @@index([statusId])
+  @@index([serialNumber])
+  @@index([imei])
+  @@index([inventoryNumber])
+  @@index([assetNumber])
+  @@index([nextVerificationDate])
+  @@index([staffId])
+  @@map("assets")
+}
+
+// ─────────────────────────────────────────────────────────────
+// History — permanent, append-only event records
+// ─────────────────────────────────────────────────────────────
+
+model Movement {
+  id           String         @id @default(cuid())
+  assetId      String         @map("asset_id")
+  asset        Asset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  action       MovementAction
+  date         DateTime       @db.Date
+  fromLocation String?        @map("from_location")
+  toLocation   String?        @map("to_location")
+  fromAssignee String?        @map("from_assignee")
+  assignedTo   String?        @map("assigned_to")
+  staffId      String?        @map("staff_id")
+  staff        Staff?         @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  shift        String?
+  statusBefore String?        @map("status_before")
+  statusAfter  String?        @map("status_after")
+  doneBy       String?        @map("done_by")
+  reason       String?
+  notes        String?
+  recordedById String?        @map("recorded_by_id")
+  recordedBy   User?          @relation("MovementRecordedBy", fields: [recordedById], references: [id])
+  source       RecordSource   @default(APP)
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@index([assetId, date])
+  @@index([action])
+  @@index([date])
+  @@index([staffId])
+  @@map("movements")
+}
+
+model Repair {
+  id                  String       @id @default(cuid())
+  assetId             String       @map("asset_id")
+  asset               Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  status              RepairStatus @default(OPEN)
+  repairOutDate       DateTime?    @map("repair_out_date") @db.Date
+  reportedProblem     String?      @map("reported_problem")
+  conditionOut        String?      @map("condition_out")
+  sentBy              String?      @map("sent_by")
+  technician          String?
+  expectedReturnDate  DateTime?    @map("expected_return_date") @db.Date
+  statusBefore        String?      @map("status_before")
+  repairInDate        DateTime?    @map("repair_in_date") @db.Date
+  repairDescription   String?      @map("repair_description")
+  partsReplaced       String?      @map("parts_replaced")
+  cost                Decimal?     @db.Decimal(12, 2)
+  conditionAfter      String?      @map("condition_after")
+  notes               String?
+  source              RecordSource @default(APP)
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  @@index([assetId])
+  @@index([status])
+  @@map("repairs")
+}
+
+model Verification {
+  id                    String             @id @default(cuid())
+  assetId               String             @map("asset_id")
+  asset                 Asset              @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  verificationDate      DateTime           @map("verification_date") @db.Date
+  physicalLocation      String?            @map("physical_location")
+  assignedUser          String?            @map("assigned_user")
+  devicePresent         Boolean            @default(false) @map("device_present")
+  serialConfirmed       Boolean            @default(false) @map("serial_confirmed")
+  assetNumberConfirmed  Boolean            @default(false) @map("asset_number_confirmed")
+  locationMatches       Boolean            @default(false) @map("location_matches")
+  assignmentMatches     Boolean            @default(false) @map("assignment_matches")
+  conditionChecked      Boolean            @default(false) @map("condition_checked")
+  condition             String?
+  result                VerificationResult
+  verifiedBy            String?            @map("verified_by")
+  remarks               String?
+  createdAt             DateTime           @default(now()) @map("created_at")
+
+  @@index([assetId, verificationDate])
+  @@map("verifications")
+}
+
+model DamageReport {
+  id          String         @id @default(cuid())
+  assetId     String         @map("asset_id")
+  asset       Asset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  date        DateTime       @db.Date
+  description String
+  severity    DamageSeverity
+  reportedBy  String?        @map("reported_by")
+  location    String?
+  notes       String?
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  attachments Attachment[]
+
+  @@index([assetId])
+  @@map("damage_reports")
+}
+
+model OsUpdate {
+  id         String   @id @default(cuid())
+  assetId    String   @map("asset_id")
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  updateDate DateTime @map("update_date") @db.Date
+  osVersion  String?  @map("os_version")
+  updatedBy  String?  @map("updated_by")
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([assetId])
+  @@map("os_updates")
+}
+
+model Attachment {
+  id             String        @id @default(cuid())
+  assetId        String?       @map("asset_id")
+  asset          Asset?        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  damageReportId String?       @map("damage_report_id")
+  damageReport   DamageReport? @relation(fields: [damageReportId], references: [id], onDelete: Cascade)
+  fileName       String        @map("file_name")
+  mimeType       String        @map("mime_type")
+  size           Int
+  data           Bytes
+  uploadedBy     String?       @map("uploaded_by")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@map("attachments")
+}
+
+/// Movement / repair requests raised by Operations Users, actioned by Inventory Officers
+model AssetRequest {
+  id            String        @id @default(cuid())
+  type          RequestType
+  assetId       String        @map("asset_id")
+  asset         Asset         @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  payload       Json          @default("{}")
+  notes         String?
+  status        RequestStatus @default(PENDING)
+  requestedById String        @map("requested_by_id")
+  requestedBy   User          @relation("RequestedBy", fields: [requestedById], references: [id])
+  reviewedById  String?       @map("reviewed_by_id")
+  reviewedBy    User?         @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewNote    String?       @map("review_note")
+  reviewedAt    DateTime?     @map("reviewed_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  @@index([status])
+  @@map("asset_requests")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Audit & notifications
+// ─────────────────────────────────────────────────────────────
+
+/// Append-only. UPDATE/DELETE are blocked by a database trigger (see migration).
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  user       User?    @relation(fields: [userId], references: [id])
+  userName   String?  @map("user_name")
+  assetId    String?  @map("asset_id")
+  asset      Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  assetCode  String?  @map("asset_code")
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  action     String
+  field      String?
+  oldValue   String?  @map("old_value")
+  newValue   String?  @map("new_value")
+  message    String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([assetId])
+  @@index([createdAt])
+  @@index([entityType])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String
+  severity  String   @default("info") // info | warning | critical | success
+  title     String
+  message   String
+  link      String?
+  /// Roles that should see this notification
+  audience  Role[]   @default([ADMIN, INVENTORY_OFFICER])
+  dedupeKey String?  @unique @map("dedupe_key")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  reads NotificationRead[]
+
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model NotificationRead {
+  notificationId String       @map("notification_id")
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now()) @map("read_at")
+
+  @@id([notificationId, userId])
+  @@map("notification_reads")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Excel import staging
+// ─────────────────────────────────────────────────────────────
+
+model ImportBatch {
+  id          String       @id @default(cuid())
+  fileName    String       @map("file_name")
+  status      ImportStatus @default(STAGED)
+  /// { byType: {...}, warnings: {...}, totals: {...} }
+  summary     Json
+  /// Parsed + normalised rows with issues (see src/lib/import/types.ts)
+  rows        Json
+  createdById String?      @map("created_by_id")
+  committedAt DateTime?    @map("committed_at")
+  result      Json?
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  @@map("import_batches")
+}
