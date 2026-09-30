@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+       outputFileTracingIncludes: {
+       "/": ["./node_modules/.prisma/client/*.wasm", "./node_modules/.prisma/client/schema.prisma"],
+       "/**/*": ["./node_modules/.prisma/client/*.wasm", "./node_modules/.prisma/client/schema.prisma"],
+     },
   serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pg", "exceljs", "jspdf", "jspdf-autotable", "bcryptjs"],
   experimental: {
     serverActions: { bodySizeLimit: "12mb" },
