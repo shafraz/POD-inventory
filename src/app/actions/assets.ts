@@ -57,10 +57,10 @@ export const bulkStatusAction = defineAction("asset.edit", bulkStatusSchema, asy
 });
 
 /** Used by the Add Asset form to preview the ID that will be assigned. */
-export async function previewNextAssetId(assetTypeId: string) {
+export async function previewNextAssetId(assetTypeId: string, receivedDate?: string | null) {
   await assertPermission("asset.view");
   if (!assetTypeId) return null;
-  return assets.nextAssetId(assetTypeId);
+  return assets.nextAssetId(assetTypeId, undefined, receivedDate && /^\d{4}-\d{2}-\d{2}$/.test(receivedDate) ? receivedDate : null);
 }
 
 /** Asset picker search (movement forms). */

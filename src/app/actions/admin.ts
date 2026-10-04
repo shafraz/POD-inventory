@@ -158,7 +158,7 @@ export const saveStatusAction = defineAction(
 
 // ── Lookup values (conditions, departments, shifts, SIM operators, brands) ──
 
-const catEnum = z.enum(["CONDITION", "DEPARTMENT", "SHIFT", "SIM_OPERATOR", "BRAND"]);
+const catEnum = z.enum(["CONDITION", "DEPARTMENT", "SHIFT", "SIM_OPERATOR", "BRAND", "ASSIGNED_TO"]);
 
 export const addLookupAction = defineAction("reference.manage", z.object({ category: catEnum, value: reqStr("Value", 80) }), async ({ category, value }, me) => {
   const exists = await prisma.lookupValue.findFirst({ where: { category, value: { equals: value, mode: "insensitive" } } });

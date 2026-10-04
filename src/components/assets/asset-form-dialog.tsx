@@ -11,6 +11,7 @@ import { Field, FormSection } from "@/components/forms/field";
 import { useApp } from "@/components/app/app-context";
 import { createAssetAction, previewNextAssetId, updateAssetAction } from "@/app/actions/assets";
 import { labelFor, type ExtraField } from "@/lib/asset-type-config";
+import { isOthers } from "@/lib/register-fields";
 
 export type AssetFormValues = {
   id?: string;
@@ -27,7 +28,9 @@ export type AssetFormValues = {
   simOperator: string;
   simNumber: string;
   locationId: string;
+  locationRemark: string;
   assignedTo: string;
+  assignedToRemark: string;
   shift: string;
   department: string;
   statusId: string;
@@ -44,7 +47,7 @@ export type AssetFormValues = {
 function blank(typeId: string, statusId: string): AssetFormValues {
   return {
     assetTypeId: typeId, deviceName: "", brand: "", model: "", serialNumber: "", imei: "", inventoryNumber: "", assetNumber: "",
-    alternateReference: "", simOperator: "", simNumber: "", locationId: "", assignedTo: "", shift: "", department: "", statusId,
+    alternateReference: "", simOperator: "", simNumber: "", locationId: "", locationRemark: "", assignedTo: "", assignedToRemark: "", shift: "", department: "", statusId,
     condition: "Good", lastOsUpdate: "", osVersion: "", lastServiceDate: "", nextVerificationDate: "", receivedDate: "", remarks: "", attributes: {},
   };
 }
@@ -71,8 +74,8 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
 
   React.useEffect(() => {
     if (!open || editing || !v.assetTypeId) return;
-    previewNextAssetId(v.assetTypeId).then(setNextId);
-  }, [open, editing, v.assetTypeId]);
+    previewNextAssetId(v.assetTypeId, v.receivedDate || null).then(setNextId);
+  }, [open, editing, v.assetTypeId, v.receivedDate]);
 
   const type = ref.types.find((t) => t.id === v.assetTypeId);
   const cfg = type?.config ?? {};
@@ -97,9 +100,9 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
       toast.success(editing ? `${res.data.assetId} updated` : `${res.data.assetId} registered`);
       router.refresh();
       if (another) {
-        setV((p) => ({ ...blank(p.assetTypeId, p.statusId), locationId: p.locationId, brand: p.brand, model: p.model, simOperator: p.simOperator }));
+        setV((p) => ({ ...blank(p.assetTypeId, p.statusId), locationId: p.locationId, locationRemark: p.locationRemark, assignedTo: p.assignedTo, assignedToRemark: p.assignedToRemark, shift: p.shift, brand: p.brand, model: p.model, simOperator: p.simOperator, receivedDate: p.receivedDate }));
         setPhoto(null);
-        previewNextAssetId(v.assetTypeId).then(setNextId);
+        previewNextAssetId(v.assetTypeId, v.receivedDate || null).then(setNextId);
         firstField.current?.focus();
       } else {
         onOpenChange(false);
@@ -137,6 +140,8 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
     );
   };
 
+  const locOthers = isOthers(ref.locations.find((l) => l.id === v.locationId)?.name);
+  const assignOthers = isOthers(v.assignedTo);
   const showImei = cfg.identifier === "imei" || !!v.imei;
   const showSerial = cfg.identifier !== "imei" || !!v.serialNumber;
 
@@ -162,11 +167,9 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
                   {ref.types.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.prefix})</option>)}
                 </NativeSelect>
               </Field>
-              <Field label={labelFor(cfg, "deviceName")} required error={errors.deviceName}>
-                <Input ref={firstField} value={v.deviceName} onChange={(e) => set("deviceName", e.target.value)} data-testid="asset-deviceName" autoFocus />
-              </Field>
+              <Field label="Received date" hint={editing ? undefined : "Sets the year in the Asset ID"}>{inp("receivedDate", { type: "date" })}</Field>
               <Field label="Brand" error={errors.brand}>
-                <Input list="brand-list" value={v.brand} onChange={(e) => set("brand", e.target.value)} data-testid="asset-brand" />
+                <Input ref={firstField} list="brand-list" value={v.brand} onChange={(e) => set("brand", e.target.value)} data-testid="asset-brand" autoFocus />
               </Field>
               <datalist id="brand-list">{ref.brands.map((b) => <option key={b} value={b} />)}</datalist>
               <Field label="Model">{inp("model")}</Field>
@@ -174,7 +177,8 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
               {showSerial && <Field label={labelFor(cfg, "serialNumber")} error={errors.serialNumber}>{inp("serialNumber")}</Field>}
               <Field label={labelFor(cfg, "inventoryNumber")} error={errors.inventoryNumber}>{inp("inventoryNumber")}</Field>
               <Field label={labelFor(cfg, "assetNumber")} error={errors.assetNumber}>{inp("assetNumber")}</Field>
-              <Field label={labelFor(cfg, "alternateReference")}>{inp("alternateReference")}</Field>
+              <Field label="SIM / Operator">{sel("simOperator", ref.simOperators, "None")}</Field>
+              {(cfg.hasSim || v.simNumber) && <Field label="SIM number">{inp("simNumber")}</Field>}
             </FormSection>
 
             {(cfg.extraFields?.length ?? 0) > 0 && (
@@ -183,23 +187,21 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
               </FormSection>
             )}
 
-            <FormSection title="Assignment">
+            <FormSection title="Location &amp; assignment">
               <Field label="Location" error={errors.locationId}>
                 <NativeSelect value={v.locationId} onChange={(e) => set("locationId", e.target.value)} placeholder="— No location —" data-testid="asset-locationId">
                   {ref.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </NativeSelect>
               </Field>
-              <Field label="Assigned to">{inp("assignedTo")}</Field>
-              <Field label={labelFor(cfg, "shift")}>{sel("shift", ref.shifts)}</Field>
-              <Field label="Department">{sel("department", ref.departments)}</Field>
+              <Field label="Location remark" required={locOthers} error={errors.locationRemark} hint={locOthers ? "Where exactly?" : "Optional"}>
+                {inp("locationRemark", { placeholder: locOthers ? "e.g. COD, Marine Craft" : "" })}
+              </Field>
+              <Field label="Assigned To" error={errors.assignedTo}>{sel("assignedTo", ref.assignedUnits)}</Field>
+              <Field label="Assigned To remark" required={assignOthers} error={errors.assignedToRemark} hint={assignOthers ? "Who / which unit?" : "Optional"}>
+                {inp("assignedToRemark")}
+              </Field>
+              <Field label="Shift">{sel("shift", ref.shifts)}</Field>
             </FormSection>
-
-            {(cfg.hasSim || v.simOperator || v.simNumber) && (
-              <FormSection title="Connectivity">
-                <Field label="SIM / Operator">{sel("simOperator", ref.simOperators, "None")}</Field>
-                <Field label="SIM number">{inp("simNumber")}</Field>
-              </FormSection>
-            )}
 
             <FormSection title="Status">
               <Field label="Status" required error={errors.statusId}>
@@ -218,7 +220,9 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
             </FormSection>
 
             <FormSection title="Other">
-              <Field label="Received date">{inp("receivedDate", { type: "date" })}</Field>
+              <Field label={labelFor(cfg, "deviceName")} hint="Optional local name / code" error={errors.deviceName}>{inp("deviceName")}</Field>
+              <Field label={labelFor(cfg, "alternateReference")}>{inp("alternateReference")}</Field>
+              <Field label="Department">{sel("department", ref.departments)}</Field>
               <Field label="Attachment / photo" hint="Image or PDF, max 5 MB">
                 <Input type="file" accept="image/*,application/pdf" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
               </Field>

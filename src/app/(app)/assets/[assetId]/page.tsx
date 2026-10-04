@@ -11,6 +11,7 @@ import { InfoList, StatusBadge, VerificationBadge } from "@/components/shared/mi
 import { AssetActions } from "@/components/assets/asset-actions";
 import { AssetHistoryTabs } from "@/components/assets/asset-history-tabs";
 import { formatDate, toISODate } from "@/lib/utils";
+import { withRemark } from "@/lib/register-fields";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +32,8 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ as
   const formInitial = {
     id: a.id, assetId: a.assetId, assetTypeId: a.assetTypeId, deviceName: a.deviceName ?? "", brand: a.brand ?? "", model: a.model ?? "",
     serialNumber: a.serialNumber ?? "", imei: a.imei ?? "", inventoryNumber: a.inventoryNumber ?? "", assetNumber: a.assetNumber ?? "",
-    alternateReference: a.alternateReference ?? "", simOperator: a.simOperator ?? "", simNumber: a.simNumber ?? "", locationId: a.locationId ?? "",
-    assignedTo: a.assignedTo ?? "", shift: a.shift ?? "", department: a.department ?? "", statusId: a.statusId, condition: a.condition ?? "",
+    alternateReference: a.alternateReference ?? "", simOperator: a.simOperator ?? "", simNumber: a.simNumber ?? "", locationId: a.locationId ?? "", locationRemark: a.locationRemark ?? "",
+    assignedTo: a.assignedTo ?? "", assignedToRemark: a.assignedToRemark ?? "", shift: a.shift ?? "", department: a.department ?? "", statusId: a.statusId, condition: a.condition ?? "",
     lastOsUpdate: toISODate(a.lastOsUpdate), osVersion: a.osVersion ?? "", lastServiceDate: toISODate(a.lastServiceDate),
     nextVerificationDate: toISODate(a.nextVerificationDate), receivedDate: toISODate(a.receivedDate), remarks: a.remarks ?? "",
     attributes: attrs as Record<string, string | number | boolean | null>,
@@ -53,8 +54,9 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ as
             <p className="mt-1 text-[13.5px] text-slate-600">
               {a.assetType.name}
               {a.deviceName && <> · <span className="font-medium text-slate-800">{a.deviceName}</span></>}
-              {a.location && <> · {a.location.name}</>}
-              {a.assignedTo && <> · {a.assignedTo}</>}
+              {a.location && <> · {withRemark(a.location.name, a.locationRemark)}</>}
+              {a.assignedTo && <> · {withRemark(a.assignedTo, a.assignedToRemark)}</>}
+              {a.staff && <> · {a.staff.name}</>}
             </p>
           </div>
           <AssetActions
@@ -95,7 +97,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ as
                 { label: "IMEI", value: a.imei, mono: true },
                 { label: "Serial number", value: a.serialNumber, mono: true },
                 { label: labelFor(cfg, "inventoryNumber"), value: a.inventoryNumber, mono: true },
-                { label: "Asset number", value: a.assetNumber, mono: true },
+                { label: labelFor(cfg, "assetNumber"), value: a.assetNumber, mono: true },
                 { label: labelFor(cfg, "alternateReference"), value: a.alternateReference, mono: true },
                 ...(cfg.hasSim || a.simOperator || a.simNumber ? [{ label: "SIM / operator", value: [a.simOperator, a.simNumber].filter(Boolean).join(" · ") || null }] : []),
                 ...(cfg.extraFields ?? []).map((f) => ({ label: f.label, value: attrs[f.key] === undefined || attrs[f.key] === null ? null : f.type === "boolean" ? (attrs[f.key] ? "Yes" : "No") : String(attrs[f.key]) })),
@@ -119,17 +121,18 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ as
                 className="sm:grid-cols-2"
                 items={[
                   { label: "Location", value: <span data-testid="detail-location">{a.location?.name ?? null}</span> },
-                  { label: "Status", value: <span data-testid="detail-status">{a.status.name}</span> },
+                  { label: "Location remark", value: a.locationRemark },
+                  { label: "Assigned To", value: <span data-testid="detail-assigned">{a.assignedTo}</span> },
+                  { label: "Assigned To remark", value: a.assignedToRemark },
                   {
-                    label: "Assigned to",
+                    label: "Held by (staff)",
                     value: a.staff ? (
-                      <Link href={`/staff/${a.staff.id}`} className="text-primary hover:underline" data-testid="detail-assigned">
+                      <Link href={`/staff/${a.staff.id}`} className="text-primary hover:underline" data-testid="detail-holder">
                         {a.staff.name} <span className="font-mono text-xs text-muted-foreground">{a.staff.employeeNumber}</span>
                       </Link>
-                    ) : (
-                      <span data-testid="detail-assigned">{a.assignedTo}</span>
-                    ),
+                    ) : null,
                   },
+                  { label: "Status", value: <span data-testid="detail-status">{a.status.name}</span> },
                   { label: labelFor(cfg, "shift"), value: a.shift },
                   { label: "Department", value: a.department },
                   { label: "Issued date", value: a.issuedDate ? formatDate(a.issuedDate) : null },

@@ -19,6 +19,7 @@ export async function getReferenceData(opts: { includeInactive?: boolean } = {})
     conditions: byCat("CONDITION"),
     departments: byCat("DEPARTMENT"),
     shifts: byCat("SHIFT"),
+    assignedUnits: byCat("ASSIGNED_TO"),
     simOperators: byCat("SIM_OPERATOR"),
     brands: byCat("BRAND"),
   };

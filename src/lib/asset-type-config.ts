@@ -36,8 +36,8 @@ export const CORE_LABELS: Record<CoreLabelKey, string> = {
   deviceName: "Device Name / Code",
   serialNumber: "Serial Number",
   imei: "IMEI",
-  inventoryNumber: "Inventory Number",
-  assetNumber: "Asset Number",
+  inventoryNumber: "Inventory No.",
+  assetNumber: "IT Asset No.",
   alternateReference: "Alt. Reference No.",
   shift: "Shift",
 };

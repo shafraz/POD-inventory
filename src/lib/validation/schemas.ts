@@ -27,7 +27,7 @@ export const reqDate = (label = "Date") =>
 
 export const assetInputSchema = z.object({
   assetTypeId: reqStr("Asset type"),
-  deviceName: reqStr("Device name / code"),
+  deviceName: optStr(150),
   brand: optStr(100),
   model: optStr(100),
   serialNumber: optStr(100),
@@ -38,7 +38,9 @@ export const assetInputSchema = z.object({
   simOperator: optStr(100),
   simNumber: optStr(50),
   locationId: optStr(50),
+  locationRemark: optStr(200),
   assignedTo: optStr(150),
+  assignedToRemark: optStr(200),
   shift: optStr(50),
   department: optStr(100),
   statusId: reqStr("Status"),
@@ -70,8 +72,10 @@ export const requestSchema = z.object({
   type: z.enum(["ISSUE", "TRANSFER", "RETURN", "REPAIR"]),
   assetId: reqStr("Asset"),
   toLocationId: optStr(50),
+  locationRemark: optStr(200),
   staffId: optStr(50),
   assignedTo: optStr(150),
+  assignedToRemark: optStr(200),
   shift: optStr(50),
   problem: optStr(1000),
   notes: optStr(2000),
@@ -81,18 +85,22 @@ export const issueSchema = z
   .object({
     ...base,
     toLocationId: reqStr("To location"),
+    locationRemark: optStr(200),
     staffId: optStr(50),
     assignedTo: optStr(150),
+    assignedToRemark: optStr(200),
     shift: optStr(50),
     department: optStr(100),
   })
-  .refine((v) => v.staffId || v.assignedTo, { message: "Choose a staff member or enter who it is assigned to", path: ["assignedTo"] });
+  .refine((v) => v.staffId || v.assignedTo, { message: "Choose Assigned To and/or a staff member", path: ["assignedTo"] });
 
 export const transferSchema = z.object({
   ...base,
   toLocationId: reqStr("New location"),
+  locationRemark: optStr(200),
   staffId: optStr(50),
   assignedTo: optStr(150),
+  assignedToRemark: optStr(200),
   shift: optStr(50),
   reason: optStr(500),
 });
@@ -100,6 +108,7 @@ export const transferSchema = z.object({
 export const returnSchema = z.object({
   ...base,
   toLocationId: reqStr("Return location"),
+  locationRemark: optStr(200),
   returnedBy: optStr(150),
   condition: optStr(50),
 });

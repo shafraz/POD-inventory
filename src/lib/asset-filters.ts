@@ -12,6 +12,8 @@ export type AssetFilters = {
   status?: string[]; // status ids
   statusCode?: string[]; // status codes (used by dashboard links)
   location?: string[]; // location ids, or "none"
+  assignedTo?: string[]; // unit names, or "none"
+  shift?: string[]; // shift values, or "none"
   condition?: string[];
   verification?: VerificationState[];
   review?: boolean;
@@ -45,6 +47,8 @@ export function parseAssetFilters(sp: SP): AssetFilters {
     status: getAll(sp, "status"),
     statusCode: getAll(sp, "statusCode"),
     location: getAll(sp, "location"),
+    assignedTo: getAll(sp, "assignedTo"),
+    shift: getAll(sp, "shift"),
     condition: getAll(sp, "condition"),
     verification,
     review: one("review") === "1",
@@ -59,7 +63,7 @@ export function parseAssetFilters(sp: SP): AssetFilters {
 export function filtersToQuery(f: AssetFilters): string {
   const p = new URLSearchParams();
   if (f.q) p.set("q", f.q);
-  for (const k of ["type", "status", "statusCode", "location", "condition", "verification"] as const) {
+  for (const k of ["type", "status", "statusCode", "location", "assignedTo", "shift", "condition", "verification"] as const) {
     const v = f[k];
     if (v && v.length) p.set(k, v.join(","));
   }
@@ -85,6 +89,9 @@ export function assetSearchWhere(q: string): Prisma.AssetWhereInput {
     { alternateReference: c },
     { simNumber: c },
     { assignedTo: c },
+    { assignedToRemark: c },
+    { locationRemark: c },
+    { simOperator: c },
     { department: c },
     { shift: c },
     { remarks: c },
@@ -113,6 +120,15 @@ export function buildAssetWhere(f: AssetFilters, today: Date, dueSoonDays: numbe
     if (f.location.includes("none")) or.push({ locationId: null });
     and.push({ OR: or });
   }
+  for (const field of ["assignedTo", "shift"] as const) {
+    const sel = f[field];
+    if (!sel?.length) continue;
+    const vals = sel.filter((x) => x !== "none");
+    const or: Prisma.AssetWhereInput[] = [];
+    if (vals.length) or.push({ [field]: { in: vals, mode: "insensitive" } });
+    if (sel.includes("none")) or.push({ [field]: null }, { [field]: "" });
+    and.push({ OR: or });
+  }
   if (f.condition?.length) {
     const vals = f.condition.filter((c) => c !== "none");
     const or: Prisma.AssetWhereInput[] = [];
@@ -133,7 +149,12 @@ const SORTABLE: Record<string, (dir: "asc" | "desc") => Prisma.AssetOrderByWithR
   type: (dir) => ({ assetType: { sortOrder: dir } }),
   deviceName: (dir) => ({ deviceName: dir }),
   location: (dir) => ({ location: { name: dir } }),
-  assignedTo: (dir) => ({ assignedTo: dir }),
+  assignedTo: (dir) => ({ assignedTo: { sort: dir, nulls: "last" } }),
+  shift: (dir) => ({ shift: { sort: dir, nulls: "last" } }),
+  brand: (dir) => ({ brand: { sort: dir, nulls: "last" } }),
+  model: (dir) => ({ model: { sort: dir, nulls: "last" } }),
+  assetNumber: (dir) => ({ assetNumber: { sort: dir, nulls: "last" } }),
+  receivedDate: (dir) => ({ receivedDate: { sort: dir, nulls: "last" } }),
   status: (dir) => ({ status: { sortOrder: dir } }),
   condition: (dir) => ({ condition: dir }),
   lastVerificationDate: (dir) => ({ lastVerificationDate: { sort: dir, nulls: "first" } }),

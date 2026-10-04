@@ -1,5 +1,6 @@
 import type { MovementAction, Prisma, StatusCode } from "@prisma/client";
 import type { z } from "zod";
+import { isOthers, withRemark, canonicalAssignedTo } from "@/lib/register-fields";
 import { prisma, type Tx } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth/session";
 import { DomainError } from "@/lib/action";
@@ -58,10 +59,10 @@ async function writeMovement(
       assetId: a.id,
       action,
       date: parseISODate(input.date)!,
-      fromLocation: a.location?.name ?? null,
-      toLocation: after.location?.name ?? null,
-      fromAssignee: a.assignedTo,
-      assignedTo: after.assignedTo,
+      fromLocation: withRemark(a.location?.name, a.locationRemark),
+      toLocation: withRemark(after.location?.name, after.locationRemark),
+      fromAssignee: withRemark(a.assignedTo, a.assignedToRemark) ?? a.staff?.name ?? null,
+      assignedTo: withRemark(after.assignedTo, after.assignedToRemark) ?? after.staff?.name ?? null,
       staffId: after.staffId,
       shift: after.shift,
       statusBefore: a.status.name,
@@ -73,6 +74,12 @@ async function writeMovement(
       ...extra,
     },
   });
+}
+
+/** "Others" must say what it means. */
+function assertRemarks(loc: { name: string } | null, locationRemark?: string | null, assignedTo?: string | null, assignedToRemark?: string | null) {
+  if (loc && isOthers(loc.name) && !locationRemark) throw new DomainError("Enter a location remark when the location is Others", { locationRemark: "Required when location is Others" });
+  if (isOthers(assignedTo) && !assignedToRemark) throw new DomainError("Enter an Assigned To remark when Assigned To is Others", { assignedToRemark: "Required when Assigned To is Others" });
 }
 
 /** Resolve an active staff member for an issue / transfer. */
@@ -115,10 +122,13 @@ export function issueAsset(input: z.infer<typeof issueSchema>, user: CurrentUser
     const to = await locationName(ctx.tx, input.toLocationId);
     const inUse = await statusByCode(ctx.tx, "IN_USE");
     const staff = await loadStaff(ctx.tx, input.staffId);
-    const assignee = staff ? staff.name : input.assignedTo!;
+    assertRemarks(to, input.locationRemark, input.assignedTo, input.assignedToRemark);
+    const assignee = [input.assignedTo ? withRemark(input.assignedTo, input.assignedToRemark) : null, staff ? `${staff.name} (${staff.employeeNumber})` : null].filter(Boolean).join(" · ");
     const { after } = await applyAssetChange(ctx.tx, user, a.id, {
       locationId: to!.id,
-      assignedTo: assignee,
+      locationRemark: input.locationRemark ?? null,
+      assignedTo: input.assignedTo ?? null,
+      assignedToRemark: input.assignedTo ? input.assignedToRemark ?? null : null,
       staffId: staff?.id ?? null,
       shift: input.shift ?? staff?.shift ?? a.shift,
       department: input.department ?? a.department,
@@ -127,7 +137,7 @@ export function issueAsset(input: z.infer<typeof issueSchema>, user: CurrentUser
     }, "ISSUE");
     const m = await writeMovement(ctx, a, after, "ISSUE", input);
     await closeRequest(ctx, input.requestId);
-    await movementNotice(ctx, a, "ISSUE", `${a.assetId} issued to ${assignee}${staff ? ` (${staff.employeeNumber})` : ""} at ${to!.name}.`);
+    await movementNotice(ctx, a, "ISSUE", `${a.assetId} issued to ${assignee} at ${withRemark(to!.name, input.locationRemark)}.`);
     return { movementId: m.id, assetId: a.assetId };
   });
 }
@@ -138,21 +148,27 @@ export function transferAsset(input: z.infer<typeof transferSchema>, user: Curre
     assertAllowed(a, "TRANSFER");
     const to = await locationName(ctx.tx, input.toLocationId);
     const staff = await loadStaff(ctx.tx, input.staffId);
-    // New holder: a staff member, else free-text assignee, else unchanged
-    const newAssignee = staff ? staff.name : input.assignedTo ?? a.assignedTo;
-    const newStaffId = staff ? staff.id : input.assignedTo ? null : a.staffId;
-    if (to!.id === a.locationId && (newAssignee ?? "") === (a.assignedTo ?? "") && newStaffId === a.staffId) {
+    // Unit: new choice or unchanged. Holder: chosen staff member; a new unit without a person clears the holder.
+    const newUnit = input.assignedTo ?? a.assignedTo;
+    const newUnitRemark = input.assignedTo ? input.assignedToRemark ?? null : a.assignedToRemark;
+    const unitChanged = (newUnit ?? "") !== (a.assignedTo ?? "") || (newUnitRemark ?? "") !== (a.assignedToRemark ?? "");
+    const newStaffId = staff ? staff.id : unitChanged ? null : a.staffId;
+    const newLocRemark = input.locationRemark ?? null;
+    assertRemarks(to, newLocRemark, newUnit, newUnitRemark);
+    if (to!.id === a.locationId && (newLocRemark ?? "") === (a.locationRemark ?? "") && !unitChanged && newStaffId === a.staffId) {
       throw new DomainError("Choose a different location or assignee — nothing would change.");
     }
     const { after } = await applyAssetChange(ctx.tx, user, a.id, {
       locationId: to!.id,
-      assignedTo: newAssignee,
+      locationRemark: newLocRemark,
+      assignedTo: newUnit,
+      assignedToRemark: newUnitRemark,
       staffId: newStaffId,
       shift: input.shift ?? (staff?.shift || a.shift),
     }, "TRANSFER");
     const m = await writeMovement(ctx, a, after, "TRANSFER", input);
     await closeRequest(ctx, input.requestId);
-    await movementNotice(ctx, a, "TRANSFER", `${a.assetId} transferred from ${a.location?.name ?? "—"} to ${to!.name}.`);
+    await movementNotice(ctx, a, "TRANSFER", `${a.assetId} transferred from ${withRemark(a.location?.name, a.locationRemark) ?? "—"} to ${withRemark(to!.name, newLocRemark)}.`);
     return { movementId: m.id, assetId: a.assetId };
   });
 }
@@ -164,9 +180,12 @@ export function returnAsset(input: z.infer<typeof returnSchema>, user: CurrentUs
     const to = await locationName(ctx.tx, input.toLocationId);
     const damaged = input.condition && /damag|critical/i.test(input.condition);
     const status = await statusByCode(ctx.tx, damaged ? "DAMAGED" : "IN_STOCK");
+    assertRemarks(to, input.locationRemark);
     const { after } = await applyAssetChange(ctx.tx, user, a.id, {
       locationId: to!.id,
+      locationRemark: input.locationRemark ?? null,
       assignedTo: null,
+      assignedToRemark: null,
       staffId: null,
       shift: null,
       statusId: status.id,
@@ -176,7 +195,7 @@ export function returnAsset(input: z.infer<typeof returnSchema>, user: CurrentUs
     // The movement records who returned it (the previous holder)
     const m = await writeMovement(ctx, a, after, "RETURN", { ...input, notes }, { staffId: a.staffId });
     await closeRequest(ctx, input.requestId);
-    await movementNotice(ctx, a, "RETURN", `${a.assetId} returned to ${to!.name}${damaged ? " (damaged)" : ""}.`);
+    await movementNotice(ctx, a, "RETURN", `${a.assetId} returned to ${withRemark(to!.name, input.locationRemark)}${damaged ? " (damaged)" : ""}.`);
     return { movementId: m.id, assetId: a.assetId };
   });
 }
@@ -188,7 +207,7 @@ export function disposeAsset(input: z.infer<typeof disposeSchema>, user: Current
     const a = await loadAsset(ctx.tx, input.assetId);
     assertAllowed(a, "DISPOSE");
     const s = await statusByCode(ctx.tx, "DISPOSED");
-    const { after } = await applyAssetChange(ctx.tx, user, a.id, { statusId: s.id, assignedTo: null, staffId: null }, "DISPOSE");
+    const { after } = await applyAssetChange(ctx.tx, user, a.id, { statusId: s.id, assignedTo: null, assignedToRemark: null, staffId: null }, "DISPOSE");
     const m = await writeMovement(ctx, a, after, "DISPOSE", input);
     await movementNotice(ctx, a, "DISPOSE", `${a.assetId} disposed. Reason: ${input.reason}`, "warning");
     return { movementId: m.id, assetId: a.assetId };
@@ -291,7 +310,7 @@ export function repairIn(input: z.infer<typeof repairInSchema>, user: CurrentUse
       statusId: statusAfterId,
       condition: input.conditionAfter ?? a.condition,
       lastServiceDate: parseISODate(input.date),
-      ...(to ? { locationId: to.id } : {}),
+      ...(to ? { locationId: to.id, locationRemark: null } : {}),
     }, "REPAIR_IN");
     await writeMovement(ctx, a, after, "REPAIR_IN", { ...input, reason: input.repairDescription }, {
       fromLocation: repair.technician ? `Repair: ${repair.technician}` : "Repair",
@@ -364,8 +383,8 @@ export function verifyAsset(input: z.infer<typeof verifySchema>, user: CurrentUs
       data: {
         assetId: a.id,
         verificationDate: date,
-        physicalLocation: loc?.name ?? a.location?.name,
-        assignedUser: input.assignedUser ?? a.assignedTo,
+        physicalLocation: loc ? loc.name : withRemark(a.location?.name, a.locationRemark),
+        assignedUser: input.assignedUser ?? withRemark(a.assignedTo, a.assignedToRemark) ?? a.staff?.name ?? null,
         devicePresent: input.devicePresent,
         serialConfirmed: input.serialConfirmed,
         assetNumberConfirmed: input.assetNumberConfirmed,
@@ -388,14 +407,16 @@ export function verifyAsset(input: z.infer<typeof verifySchema>, user: CurrentUs
       if (input.condition) patch.condition = input.condition;
       if (input.updateRegister) {
         if (loc && loc.id !== a.locationId) patch.locationId = loc.id;
-        if (input.assignedUser && input.assignedUser !== a.assignedTo) {
-          patch.assignedTo = input.assignedUser;
+        if (input.assignedUser && input.assignedUser !== a.assignedTo && input.assignedUser !== withRemark(a.assignedTo, a.assignedToRemark)) {
+          const unit = canonicalAssignedTo(input.assignedUser);
+          patch.assignedTo = unit.value;
+          patch.assignedToRemark = unit.remark;
           patch.staffId = null;
         }
       }
       if (input.statusAfterId) patch.statusId = input.statusAfterId;
       else if (a.status.code === "UNVERIFIED") {
-        const assigned = (patch.assignedTo as string | undefined) ?? a.assignedTo;
+        const assigned = (patch.assignedTo as string | undefined) ?? a.assignedTo ?? a.staffId;
         patch.statusId = (await statusByCode(ctx.tx, assigned ? "IN_USE" : "IN_STOCK")).id;
       }
     }
@@ -484,7 +505,7 @@ export function createRequest(input: z.infer<typeof requestSchema>, user: Curren
         assetId: a.id,
         requestedById: user.id,
         notes: input.notes,
-        payload: { toLocationId: input.toLocationId, staffId: input.staffId, assignedTo: input.assignedTo, shift: input.shift, problem: input.problem },
+        payload: { toLocationId: input.toLocationId, locationRemark: input.locationRemark, staffId: input.staffId, assignedTo: input.assignedTo, assignedToRemark: input.assignedToRemark, shift: input.shift, problem: input.problem },
       },
     });
     await auditEvent(ctx.tx, user, { entityType: "Request", entityId: req.id, action: "REQUEST", asset: a, message: `${input.type.toLowerCase()} request raised for ${a.assetId}` });

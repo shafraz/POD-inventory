@@ -29,53 +29,66 @@ export const REPORTS = [
 ] as const;
 export type ReportKey = (typeof REPORTS)[number]["key"] | "asset-record";
 
+/** Same order as the on-screen Asset Register. */
 const ASSET_COLUMNS: ReportColumn[] = [
   { key: "assetId", label: "Asset ID", width: 14 },
-  { key: "type", label: "Asset Type", width: 12 },
-  { key: "deviceName", label: "Device Name / Code", width: 24 },
-  { key: "brand", label: "Brand", width: 12 },
-  { key: "model", label: "Model", width: 12 },
+  { key: "type", label: "Type", width: 11 },
+  { key: "brand", label: "Brand", width: 11 },
+  { key: "model", label: "Model", width: 14 },
   { key: "serial", label: "Serial / IMEI", width: 18 },
-  { key: "inventoryNumber", label: "Inventory No.", width: 14 },
-  { key: "assetNumber", label: "Asset No.", width: 24 },
-  { key: "alternateReference", label: "Alt Ref No.", width: 12 },
-  { key: "sim", label: "SIM / Operator", width: 22 },
-  { key: "location", label: "Location", width: 14 },
-  { key: "assignedTo", label: "Assigned To / Shift", width: 18 },
+  { key: "inventoryNumber", label: "Inventory No.", width: 13 },
+  { key: "assetNumber", label: "IT Asset No.", width: 24 },
+  { key: "sim", label: "SIM / Operator", width: 16 },
+  { key: "location", label: "Location", width: 10 },
+  { key: "locationRemark", label: "Location remark", width: 16 },
+  { key: "assignedTo", label: "Assigned To", width: 13 },
+  { key: "assignedToRemark", label: "Assigned To Remark", width: 18 },
+  { key: "shift", label: "Shift", width: 10 },
   { key: "status", label: "Status", width: 12 },
-  { key: "condition", label: "Condition", width: 10 },
-  { key: "lastVerification", label: "Last Verification", width: 13 },
-  { key: "nextVerification", label: "Next Verification", width: 13 },
-  { key: "verificationState", label: "Verification", width: 11 },
-  { key: "lastOsUpdate", label: "Last OS Update", width: 13 },
+  { key: "lastVerification", label: "Last Verified", width: 13 },
+  { key: "nextVerification", label: "Next Verification", width: 16 },
+  { key: "receivedDate", label: "Received Date", width: 13 },
   { key: "remarks", label: "Remarks", width: 30 },
+  { key: "heldBy", label: "Held by (staff)", width: 18 },
 ];
+/** Columns used by the specialised reports but not shown in the register export. */
+const ALL_ASSET_COLUMNS: ReportColumn[] = [
+  ...ASSET_COLUMNS,
+  { key: "deviceName", label: "Device Name / Code", width: 20 },
+  { key: "condition", label: "Condition", width: 10 },
+  { key: "verificationState", label: "Verification", width: 11 },
+];
+const pick = (keys: string[]) => keys.map((k) => ALL_ASSET_COLUMNS.find((c) => c.key === k)!).filter(Boolean);
 
 type ListedAsset = Awaited<ReturnType<typeof listAssets>>["rows"][number];
 
 function assetRow(a: ListedAsset): Record<string, Cell> {
   const sim = [a.simOperator, a.simNumber].filter(Boolean).join(" / ");
-  const assigned = [a.assignedTo, a.shift && a.shift !== a.assignedTo ? a.shift : null].filter(Boolean).join(" · ");
+  const next = a.nextVerificationDate ? formatDate(a.nextVerificationDate) : "Never verified";
+  const state = a.status.code !== "DISPOSED" && a.verification !== "VERIFIED" ? ` (${VERIFICATION_STATE_LABELS[a.verification]})` : "";
   return {
     assetId: a.assetId,
     type: a.assetType.name,
-    deviceName: a.deviceName,
     brand: a.brand,
     model: a.model,
     serial: a.imei || a.serialNumber,
     inventoryNumber: a.inventoryNumber,
     assetNumber: a.assetNumber,
-    alternateReference: a.alternateReference,
     sim: sim || null,
     location: a.location?.name ?? null,
-    assignedTo: assigned || null,
+    locationRemark: a.locationRemark,
+    assignedTo: a.assignedTo,
+    assignedToRemark: a.assignedToRemark,
+    shift: a.shift,
     status: a.status.name,
-    condition: a.condition,
     lastVerification: a.lastVerificationDate ? formatDate(a.lastVerificationDate) : null,
-    nextVerification: a.nextVerificationDate ? formatDate(a.nextVerificationDate) : null,
-    verificationState: VERIFICATION_STATE_LABELS[a.verification],
-    lastOsUpdate: a.lastOsUpdate ? formatDate(a.lastOsUpdate) : null,
+    nextVerification: next + state,
+    receivedDate: a.receivedDate ? formatDate(a.receivedDate) : null,
     remarks: a.remarks,
+    heldBy: a.staff ? `${a.staff.name} (${a.staff.employeeNumber})` : null,
+    deviceName: a.deviceName,
+    condition: a.condition,
+    verificationState: VERIFICATION_STATE_LABELS[a.verification],
   };
 }
 
@@ -95,6 +108,8 @@ async function describeAssetFilters(f: AssetFilters) {
     const l = await prisma.location.findMany({ where: { id: { in: f.location } } });
     parts.push(`Location: ${[...l.map((x) => x.name), ...(f.location.includes("none") ? ["(none)"] : [])].join(", ")}`);
   }
+  if (f.assignedTo?.length) parts.push(`Assigned To: ${f.assignedTo.map((x) => (x === "none" ? "(none)" : x)).join(", ")}`);
+  if (f.shift?.length) parts.push(`Shift: ${f.shift.map((x) => (x === "none" ? "(none)" : x)).join(", ")}`);
   if (f.condition?.length) parts.push(`Condition: ${f.condition.join(", ")}`);
   if (f.verification?.length) parts.push(`Verification: ${f.verification.map((v) => VERIFICATION_STATE_LABELS[v]).join(", ")}`);
   if (f.review) parts.push("Needs review");
@@ -144,7 +159,7 @@ export async function buildReport(key: ReportKey, sp: SP): Promise<ReportResult>
         key === "damaged"
           ? [{ key: "damageDate", label: "Reported", width: 12 }, { key: "severity", label: "Severity", width: 10 }, { key: "damage", label: "Damage", width: 30 }, { key: "reportedBy", label: "Reported By", width: 16 }]
           : [{ key: "lostDate", label: "Date", width: 12 }, { key: "reason", label: "Reason", width: 30 }, { key: "reportedBy", label: "Reported By", width: 16 }];
-      const cols = [...ASSET_COLUMNS.filter((c) => ["assetId", "type", "deviceName", "serial", "inventoryNumber", "location", "assignedTo", "condition"].includes(c.key)), ...extraCols, { key: "remarks", label: "Remarks", width: 30 }];
+      const cols = [...pick(["assetId", "type", "deviceName", "serial", "inventoryNumber", "location", "locationRemark", "assignedTo", "condition"]), ...extraCols, { key: "remarks", label: "Remarks", width: 30 }];
       return {
         title: key === "damaged" ? "Damaged Assets" : "Missing / Lost Assets",
         subtitle: `${rows.length} assets · ${generated}`,
@@ -153,7 +168,7 @@ export async function buildReport(key: ReportKey, sp: SP): Promise<ReportResult>
     }
     case "verification": {
       const { rows, settings } = await listAssets({ ...assetFilters, sort: assetFilters.sort ?? "nextVerificationDate" }, { all: true });
-      const cols = ASSET_COLUMNS.filter((c) => ["assetId", "type", "deviceName", "location", "assignedTo", "status", "lastVerification", "nextVerification", "verificationState"].includes(c.key));
+      const cols = pick(["assetId", "type", "serial", "location", "locationRemark", "assignedTo", "status", "lastVerification", "nextVerification", "verificationState"]);
       const order = ["OVERDUE", "DUE_SOON", "VERIFIED"] as const;
       const eligible = rows.filter((r) => r.status.code !== "DISPOSED");
       return {
@@ -256,9 +271,9 @@ export async function buildReport(key: ReportKey, sp: SP): Promise<ReportResult>
       const attrs = (a.attributes ?? {}) as Record<string, unknown>;
       const info: [string, Cell][] = [
         ["Asset ID", a.assetId], ["Asset Type", a.assetType.name], [labelFor(cfg, "deviceName"), a.deviceName], ["Brand", a.brand], ["Model", a.model],
-        ["Serial Number", a.serialNumber], ["IMEI", a.imei], [labelFor(cfg, "inventoryNumber"), a.inventoryNumber], ["Asset Number", a.assetNumber],
-        ["Alt. Reference", a.alternateReference], ["SIM Operator", a.simOperator], ["SIM Number", a.simNumber], ["Location", a.location?.name ?? null],
-        ["Assigned To", a.assignedTo], ["Shift", a.shift], ["Department", a.department], ["Status", a.status.name], ["Condition", a.condition],
+        ["Serial Number", a.serialNumber], ["IMEI", a.imei], [labelFor(cfg, "inventoryNumber"), a.inventoryNumber], ["IT Asset No.", a.assetNumber],
+        ["Alt. Reference", a.alternateReference], ["SIM Operator", a.simOperator], ["SIM Number", a.simNumber], ["Location", a.location?.name ?? null], ["Location Remark", a.locationRemark],
+        ["Assigned To", a.assignedTo], ["Assigned To Remark", a.assignedToRemark], ["Held by (staff)", a.staff ? `${a.staff.name} (${a.staff.employeeNumber})` : null], ["Shift", a.shift], ["Department", a.department], ["Status", a.status.name], ["Condition", a.condition],
         ["Received Date", a.receivedDate ? formatDate(a.receivedDate) : null], ["Last Service", a.lastServiceDate ? formatDate(a.lastServiceDate) : null],
         ["Last OS Update", a.lastOsUpdate ? formatDate(a.lastOsUpdate) : null], ["OS Version", a.osVersion],
         ["Last Verification", a.lastVerificationDate ? formatDate(a.lastVerificationDate) : null], ["Next Verification", a.nextVerificationDate ? formatDate(a.nextVerificationDate) : null],

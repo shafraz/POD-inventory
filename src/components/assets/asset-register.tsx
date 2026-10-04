@@ -20,32 +20,39 @@ import { cn, formatDate, todayISO } from "@/lib/utils";
 
 export type RegisterRow = {
   id: string; assetId: string; type: string; deviceName: string | null; brand: string | null; model: string | null; serial: string | null;
-  inventoryNumber: string | null; assetNumber: string | null; alternateReference: string | null; sim: string | null; location: string | null;
-  assignedTo: string | null; status: string; statusColor: string; statusCode: string; lastVerificationDate: string | null; nextVerificationDate: string | null;
-  verification: VerificationState; lastOsUpdate: string | null; condition: string | null; remarks: string | null; needsReview: boolean;
+  inventoryNumber: string | null; assetNumber: string | null; alternateReference: string | null; sim: string | null;
+  location: string | null; locationRemark: string | null; assignedTo: string | null; assignedToRemark: string | null; heldBy: string | null; shift: string | null;
+  status: string; statusColor: string; statusCode: string; lastVerificationDate: string | null; nextVerificationDate: string | null;
+  verification: VerificationState; receivedDate: string | null; lastOsUpdate: string | null; condition: string | null; remarks: string | null; needsReview: boolean;
 };
 
 type ColKey = keyof RegisterRow | "verificationState";
+/** Order and defaults follow the MPL Asset Register layout. */
 const COLUMNS: { key: ColKey; label: string; sort?: string; default: boolean; className?: string }[] = [
   { key: "type", label: "Type", sort: "type", default: true },
-  { key: "deviceName", label: "Device", sort: "deviceName", default: true },
-  { key: "brand", label: "Brand", default: false },
-  { key: "model", label: "Model", default: false },
+  { key: "brand", label: "Brand", sort: "brand", default: true },
+  { key: "model", label: "Model", sort: "model", default: true },
   { key: "serial", label: "Serial / IMEI", default: true, className: "font-mono text-[12px]" },
   { key: "inventoryNumber", label: "Inventory No.", sort: "inventoryNumber", default: true },
-  { key: "assetNumber", label: "Asset No.", default: false, className: "font-mono text-[12px]" },
-  { key: "alternateReference", label: "Alt Ref No.", default: false },
-  { key: "sim", label: "SIM / Operator", default: false },
+  { key: "assetNumber", label: "IT Asset No.", sort: "assetNumber", default: true, className: "font-mono text-[12px]" },
+  { key: "sim", label: "SIM / Operator", default: true },
   { key: "location", label: "Location", sort: "location", default: true },
-  { key: "assignedTo", label: "Assigned To / Shift", sort: "assignedTo", default: true },
+  { key: "locationRemark", label: "Location remark", default: true, className: "max-w-[12rem] truncate" },
+  { key: "assignedTo", label: "Assigned To", sort: "assignedTo", default: true },
+  { key: "assignedToRemark", label: "Assigned To Remark", default: true, className: "max-w-[12rem] truncate" },
+  { key: "shift", label: "Shift", sort: "shift", default: true },
   { key: "status", label: "Status", sort: "status", default: true },
-  { key: "lastVerificationDate", label: "Last Verified", sort: "lastVerificationDate", default: false },
+  { key: "lastVerificationDate", label: "Last Verified", sort: "lastVerificationDate", default: true },
   { key: "nextVerificationDate", label: "Next Verification", sort: "nextVerificationDate", default: true },
+  { key: "receivedDate", label: "Received Date", sort: "receivedDate", default: true },
+  { key: "remarks", label: "Remarks", default: true, className: "max-w-[16rem] truncate text-slate-500" },
+  { key: "heldBy", label: "Held by (staff)", default: false },
+  { key: "deviceName", label: "Device name / code", sort: "deviceName", default: false },
+  { key: "alternateReference", label: "Alt Ref No.", default: false },
   { key: "lastOsUpdate", label: "Last OS Update", sort: "lastOsUpdate", default: false },
   { key: "condition", label: "Condition", sort: "condition", default: false },
-  { key: "remarks", label: "Remarks", default: false, className: "max-w-[16rem] truncate text-slate-500" },
 ];
-const STORAGE_KEY = "asset-register-columns-v1";
+const STORAGE_KEY = "asset-register-columns-v2";
 
 export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; total: number; filters: AssetFilters }) {
   const { ref, can } = useApp();
@@ -115,7 +122,7 @@ export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; t
     return `${pathname}?${p.toString()}`;
   };
 
-  const activeFilters = !!(filters.q || filters.type?.length || filters.status?.length || filters.statusCode?.length || filters.location?.length || filters.condition?.length || filters.verification?.length || filters.review || filters.archived);
+  const activeFilters = !!(filters.q || filters.type?.length || filters.status?.length || filters.statusCode?.length || filters.location?.length || filters.assignedTo?.length || filters.shift?.length || filters.condition?.length || filters.verification?.length || filters.review || filters.archived);
   const allChecked = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const someChecked = rows.some((r) => selected.has(r.id));
 
@@ -137,13 +144,21 @@ export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; t
       case "nextVerificationDate":
         return (
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="tabular">{r.nextVerificationDate ? formatDate(r.nextVerificationDate) : <span className="text-slate-400">Never verified</span>}</span>
+            <span className="tabular">{r.nextVerificationDate ? formatDate(r.nextVerificationDate) : <span className="text-slate-500">Never verified</span>}</span>
             {r.statusCode !== "DISPOSED" && r.verification !== "VERIFIED" && <VerificationBadge state={r.verification} />}
           </div>
         );
       case "lastVerificationDate":
       case "lastOsUpdate":
-        return <span className="whitespace-nowrap tabular">{r[k] ? formatDate(r[k] as string) : "—"}</span>;
+      case "receivedDate":
+        return <span className="whitespace-nowrap tabular">{r[k] ? formatDate(r[k] as string) : <span className="text-slate-300">—</span>}</span>;
+      case "assignedTo":
+        return r.assignedTo || r.heldBy ? (
+          <div className="leading-tight">
+            <div>{r.assignedTo ?? <span className="text-slate-300">—</span>}</div>
+            {r.heldBy && !visible.has("heldBy") && <div className="text-[11.5px] text-muted-foreground">Held by {r.heldBy}</div>}
+          </div>
+        ) : <span className="text-slate-300">—</span>;
       default: {
         const v = r[k as keyof RegisterRow];
         return v === null || v === "" || v === undefined ? <span className="text-slate-300">—</span> : String(v);
@@ -161,7 +176,7 @@ export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; t
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Asset ID, device, serial / IMEI, inventory / asset no., location, person, remarks…" className="pl-8" data-testid="asset-search" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Asset ID, serial / IMEI, inventory / IT asset no., location, assigned to, staff, remarks…" className="pl-8" data-testid="asset-search" />
           </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>
@@ -184,6 +199,8 @@ export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; t
           <MultiSelect label="Type" testId="filter-type" options={ref.types.map((t) => ({ value: t.id, label: t.name }))} value={filters.type ?? []} onChange={(v) => update({ type: v.join(",") || null })} />
           <MultiSelect label="Status" testId="filter-status" options={ref.statuses.map((s) => ({ value: s.id, label: s.name, dot: BADGE_COLORS[s.color]?.dot }))} value={filters.status ?? []} onChange={(v) => update({ status: v.join(",") || null, statusCode: null })} />
           <MultiSelect label="Location" testId="filter-location" options={[...ref.locations.map((l) => ({ value: l.id, label: l.name })), { value: "none", label: "(No location)" }]} value={filters.location ?? []} onChange={(v) => update({ location: v.join(",") || null })} />
+          <MultiSelect label="Assigned To" testId="filter-assigned" options={[...ref.assignedUnits.map((u) => ({ value: u, label: u })), { value: "none", label: "(Not assigned)" }]} value={filters.assignedTo ?? []} onChange={(v) => update({ assignedTo: v.join(",") || null })} />
+          <MultiSelect label="Shift" options={[...ref.shifts.map((u) => ({ value: u, label: u })), { value: "none", label: "(No shift)" }]} value={filters.shift ?? []} onChange={(v) => update({ shift: v.join(",") || null })} />
           <MultiSelect label="Condition" options={[...ref.conditions.map((c) => ({ value: c, label: c })), { value: "none", label: "(Not recorded)" }]} value={filters.condition ?? []} onChange={(v) => update({ condition: v.join(",") || null })} />
           <MultiSelect
             label="Verification"
@@ -283,10 +300,11 @@ export function AssetRegister({ rows, total, filters }: { rows: RegisterRow[]; t
                   <span className="font-mono text-[13px] font-semibold">{r.assetId}</span>
                   <Badge color={r.statusColor} dot>{r.status}</Badge>
                 </div>
-                <div className="mt-0.5 text-[13px] text-slate-700">{r.deviceName ?? "—"} <span className="text-slate-400">· {r.type}</span></div>
+                <div className="mt-0.5 text-[13px] text-slate-700">{r.type}{(r.brand || r.model) && <span className="text-slate-400"> · {[r.brand, r.model].filter(Boolean).join(" ")}</span>}</div>
                 <div className="mt-1 flex flex-wrap gap-x-3 text-[12px] text-slate-500">
-                  <span>{r.location ?? "No location"}</span>
-                  {r.assignedTo && <span>{r.assignedTo}</span>}
+                  <span>{r.location ? (r.locationRemark ? `${r.location} – ${r.locationRemark}` : r.location) : "No location"}</span>
+                  {r.assignedTo && <span>{r.assignedToRemark ? `${r.assignedTo} – ${r.assignedToRemark}` : r.assignedTo}</span>}
+                  {r.shift && <span>Shift {r.shift}</span>}
                   {r.serial && <span className="font-mono">{r.serial}</span>}
                 </div>
               </Link>

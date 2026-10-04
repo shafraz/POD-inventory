@@ -77,7 +77,8 @@ type LookupRow = { id: string; category: LookupCategory; value: string; active: 
 const CATS: { key: LookupCategory; title: string; hint: string }[] = [
   { key: "CONDITION", title: "Conditions", hint: "Physical condition options" },
   { key: "DEPARTMENT", title: "Departments", hint: "Used for assignment" },
-  { key: "SHIFT", title: "Shifts / units", hint: "Shift options in forms" },
+  { key: "ASSIGNED_TO", title: "Assigned To (units)", hint: "Keep \"Others\" — it asks for a remark" },
+  { key: "SHIFT", title: "Shifts", hint: "Shift options in forms" },
   { key: "SIM_OPERATOR", title: "SIM operators / plans", hint: "For tablets" },
   { key: "BRAND", title: "Brands", hint: "Suggestions — brands can also be typed freely" },
 ];

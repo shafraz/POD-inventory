@@ -20,16 +20,17 @@ import { saveSettings, DEFAULT_SETTINGS } from "../src/lib/services/settings";
 import type { AssetTypeConfig } from "../src/lib/asset-type-config";
 import { parseWorkbook } from "../src/lib/import/parse";
 import { commitImport, loadImportContext } from "../src/lib/import/commit";
+import { DEFAULT_ASSIGNED_UNITS, DEFAULT_LOCATIONS, DEFAULT_SHIFTS, DEFAULT_STATUSES } from "../src/lib/register-fields";
 
 const WORKBOOK = process.env.SEED_WORKBOOK || path.join(__dirname, "data", "Inventory TEst.xlsx");
 
 const ASSET_TYPES: { name: string; prefix: string; description: string; config: AssetTypeConfig }[] = [
   {
-    name: 'Tablet 8"', prefix: "TAB8", description: "8-inch operational tablets (tally / yard)",
+    name: 'Tablet 8"', prefix: "Tab8", description: "8-inch operational tablets (tally / yard)",
     config: { identifier: "imei", hasSim: true, hasOs: true, uniqueName: true, labels: { deviceName: "Tablet Number" }, extraFields: [] },
   },
   {
-    name: 'Tablet 10"', prefix: "TAB10", description: "10-inch COD tablets",
+    name: 'Tablet 10"', prefix: "Tab10", description: "10-inch COD tablets",
     config: {
       identifier: "imei", hasSim: true, hasOs: true, uniqueName: true, labels: { deviceName: "Device Name / Code" },
       extraFields: [
@@ -46,7 +47,7 @@ const ASSET_TYPES: { name: string; prefix: string; description: string; config: 
   },
   {
     name: "VHF", prefix: "VHF", description: "VHF handheld radios",
-    config: { identifier: "serial", labels: { deviceName: "Local Code", inventoryNumber: "MPL Code", shift: "Unit / Shift" }, extraFields: [] },
+    config: { identifier: "serial", labels: { deviceName: "Local Code" }, extraFields: [] },
   },
 ];
 
@@ -62,16 +63,16 @@ const STATUS_META: Record<string, { code: StatusCode; color: string }> = {
 };
 
 const LOCATION_ALIASES: Record<string, string[]> = {
-  "Container Yard": ["C-Yard", "C Yard", "CY", "C.Yard"],
-  "POD Office": ["POD-Office"],
-  "Gear Store": ["Gear"],
+  THT: ["Thilafushi"],
+  Others: ["Other"],
 };
 
 const LOOKUPS: Record<LookupCategory, string[]> = {
   CONDITION: ["Good", "Fair", "Damaged", "Critical"],
   DEPARTMENT: ["Container Operations", "Port Operations", "IT", "Marine", "Security"],
-  SHIFT: ["A Shift", "B Shift", "C Shift", "General"],
+  SHIFT: [...DEFAULT_SHIFTS],
   SIM_OPERATOR: [],
+  ASSIGNED_TO: [...DEFAULT_ASSIGNED_UNITS],
   BRAND: ["Motorola", "Vertex Standard", "Samsung", "Lenovo", "HP", "Dell"],
 };
 
@@ -115,9 +116,11 @@ async function seedReference() {
       update: {},
     });
   }
-  for (const [i, name] of lists.statuses.entries()) {
-    const meta = STATUS_META[name.toLowerCase()] ?? { code: "CUSTOM" as StatusCode, color: "gray" };
-    await prisma.status.upsert({ where: { name }, create: { name, code: meta.code, color: meta.color, sortOrder: i }, update: {} });
+  // Statuses: the register's fixed list (matched case-insensitively so renamed ones aren't duplicated)
+  for (const [i, name] of DEFAULT_STATUSES.entries()) {
+    const meta = STATUS_META[name.toLowerCase()];
+    const existing = await prisma.status.findFirst({ where: { OR: [{ name: { equals: name, mode: "insensitive" } }, { code: meta.code }] } });
+    if (!existing) await prisma.status.create({ data: { name, code: meta.code, color: meta.color, sortOrder: i } });
   }
   // Ensure every system status code has a status (business rules depend on them)
   for (const [lower, meta] of Object.entries(STATUS_META)) {
@@ -127,10 +130,12 @@ async function seedReference() {
       await prisma.status.create({ data: { name, code: meta.code, color: meta.color, sortOrder: 50 } });
     }
   }
-  for (const [i, name] of lists.locations.entries()) {
-    await prisma.location.upsert({ where: { name }, create: { name, sortOrder: i, aliases: LOCATION_ALIASES[name] ?? [] }, update: {} });
+  // Locations: MCH, THT, HMT, Others (anything else is recorded as Others + remark)
+  for (const [i, name] of DEFAULT_LOCATIONS.entries()) {
+    const existing = await prisma.location.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
+    if (!existing) await prisma.location.create({ data: { name, sortOrder: i, aliases: LOCATION_ALIASES[name] ?? [] } });
   }
-  const lookups = { ...LOOKUPS, SIM_OPERATOR: lists.sims };
+  const lookups = { ...LOOKUPS, SIM_OPERATOR: [...new Set([...lists.sims, "Ooredoo 20GB"])] };
   for (const [category, values] of Object.entries(lookups) as [LookupCategory, string[]][]) {
     for (const [i, value] of values.entries()) {
       await prisma.lookupValue.upsert({
@@ -142,7 +147,7 @@ async function seedReference() {
   }
   const existing = await prisma.setting.count();
   if (!existing) await saveSettings(DEFAULT_SETTINGS);
-  console.log(`✔ Reference data: ${ASSET_TYPES.length} types, ${lists.statuses.length} statuses, ${lists.locations.length} locations`);
+  console.log(`✔ Reference data: ${ASSET_TYPES.length} types, ${DEFAULT_STATUSES.length} statuses, ${DEFAULT_LOCATIONS.length} locations`);
 }
 
 async function seedUsers() {

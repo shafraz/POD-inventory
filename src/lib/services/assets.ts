@@ -8,6 +8,7 @@ import { getSettings } from "./settings";
 import { auditAssetDiff, auditEvent, snapshotAsset } from "./audit";
 import { buildAssetOrderBy, buildAssetWhere, type AssetFilters } from "@/lib/asset-filters";
 import { verificationState } from "@/lib/verification-state";
+import { isOthers, withRemark } from "@/lib/register-fields";
 
 export const ASSET_INCLUDE = {
   assetType: true,
@@ -84,10 +85,12 @@ export async function lookupAsset(idOrCode: string) {
     assetType: a.assetType.name,
     locationId: a.locationId,
     location: a.location?.name ?? null,
+    locationRemark: a.locationRemark,
     status: a.status.name,
     statusCode: a.status.code,
     statusColor: a.status.color,
     assignedTo: a.assignedTo,
+    assignedToRemark: a.assignedToRemark,
     staff: a.staff,
     shift: a.shift,
     department: a.department,
@@ -137,11 +140,18 @@ export async function searchAssetOptions(q: string, limit = 20) {
 
 // ── Asset ID generation ───────────────────────────────────────
 
-export async function nextAssetId(assetTypeId: string, db: Tx | typeof prisma = prisma): Promise<string> {
+/**
+ * New Asset IDs look like Tab8-26-001: type prefix, two-digit year received
+ * (or the current year when no received date), then a 3-digit sequence per
+ * prefix + year. Older IDs (e.g. TAB10-003) are left untouched.
+ */
+export async function nextAssetId(assetTypeId: string, db: Tx | typeof prisma = prisma, receivedDate?: Date | string | null): Promise<string> {
   const type = await db.assetType.findUnique({ where: { id: assetTypeId } });
   if (!type) throw new DomainError("Unknown asset type");
-  const prefix = `${type.prefix}-`;
-  const existing = await db.asset.findMany({ where: { assetId: { startsWith: prefix } }, select: { assetId: true } });
+  const rd = typeof receivedDate === "string" ? parseISODate(receivedDate) : receivedDate ?? null;
+  const year = rd ? rd.getUTCFullYear() : todayDate().getUTCFullYear();
+  const prefix = `${type.prefix}-${String(year % 100).padStart(2, "0")}-`;
+  const existing = await db.asset.findMany({ where: { assetId: { startsWith: prefix, mode: "insensitive" } }, select: { assetId: true } });
   let max = 0;
   for (const { assetId } of existing) {
     const n = Number(assetId.slice(prefix.length));
@@ -150,13 +160,22 @@ export async function nextAssetId(assetTypeId: string, db: Tx | typeof prisma = 
   return `${prefix}${String(max + 1).padStart(3, "0")}`;
 }
 
+/** "Others" needs a remark so the register says where / who it really is. */
+async function assertRemarks(db: Tx, input: AssetInput) {
+  if (input.locationId) {
+    const loc = await db.location.findUnique({ where: { id: input.locationId } });
+    if (loc && isOthers(loc.name) && !input.locationRemark) throw new DomainError("Enter a location remark when the location is Others", { locationRemark: "Required when location is Others" });
+  }
+  if (isOthers(input.assignedTo) && !input.assignedToRemark) throw new DomainError("Enter an Assigned To remark when Assigned To is Others", { assignedToRemark: "Required when Assigned To is Others" });
+}
+
 // ── Validation helpers ────────────────────────────────────────
 
 const UNIQUE_FIELDS = [
   { key: "serialNumber", label: "Serial number" },
   { key: "imei", label: "IMEI" },
   { key: "inventoryNumber", label: "Inventory number" },
-  { key: "assetNumber", label: "Asset number" },
+  { key: "assetNumber", label: "IT Asset No." },
 ] as const;
 
 /**
@@ -205,7 +224,9 @@ function inputToData(input: AssetInput) {
     simOperator: input.simOperator,
     simNumber: input.simNumber,
     locationId: input.locationId,
+    locationRemark: input.locationRemark,
     assignedTo: input.assignedTo,
+    assignedToRemark: input.assignedToRemark,
     shift: input.shift,
     department: input.department,
     statusId: input.statusId,
@@ -244,7 +265,8 @@ export async function createAsset(input: AssetInput, user: CurrentUser) {
   return prisma.$transaction(async (tx) => {
     await requireStatus(tx, input.statusId);
     await assertUniqueIdentifiers(tx, input);
-    const assetId = await nextAssetId(input.assetTypeId, tx);
+    await assertRemarks(tx, input);
+    const assetId = await nextAssetId(input.assetTypeId, tx, input.receivedDate);
     const data = inputToData(input);
     const asset = await tx.asset.create({ data: { ...data, assetId, source: "APP" }, include: ASSET_INCLUDE });
     await tx.movement.create({
@@ -252,8 +274,8 @@ export async function createAsset(input: AssetInput, user: CurrentUser) {
         assetId: asset.id,
         action: "REGISTERED",
         date: data.receivedDate ?? todayDate(),
-        toLocation: asset.location?.name,
-        assignedTo: asset.assignedTo,
+        toLocation: withRemark(asset.location?.name, asset.locationRemark),
+        assignedTo: withRemark(asset.assignedTo, asset.assignedToRemark),
         statusAfter: asset.status.name,
         doneBy: user.name,
         recordedById: user.id,
@@ -277,13 +299,12 @@ export async function updateAsset(id: string, input: AssetInput, user: CurrentUs
     if (!existing) throw new DomainError("Asset not found");
     await requireStatus(tx, input.statusId);
     await assertUniqueIdentifiers(tx, input, existing);
+    await assertRemarks(tx, input);
     const data = inputToData(input);
-    // Editing the free-text assignee detaches the staff link (issue/transfer set it properly)
-    const staffPatch = (input.assignedTo ?? null) !== (existing.assignedTo ?? null) ? { staffId: null } : {};
     if (existing.assetTypeId !== input.assetTypeId) {
       throw new DomainError("Asset type cannot be changed after registration (the Asset ID prefix depends on it).");
     }
-    const { after } = await applyAssetChange(tx, user, id, { ...data, ...staffPatch }, "UPDATE");
+    const { after } = await applyAssetChange(tx, user, id, data, "UPDATE");
     return after;
   });
 }

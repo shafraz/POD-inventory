@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ArrowLeftRight, PackageOpen, Undo2, Wrench, ShieldCheck, TriangleAlert, Trash2, SearchX, RefreshCw, Send, CircleCheck, Info, MapPin, User2,
+  ArrowLeftRight, PackageOpen, Undo2, Wrench, ShieldCheck, TriangleAlert, Trash2, SearchX, RefreshCw, Send, CircleCheck, Info,
 } from "lucide-react";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, ConfirmDialog } from "@/components/ui/overlays";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import type { AssetLookup } from "@/lib/services/assets";
 import type { Permission } from "@/lib/auth/permissions";
 import { operationBlockedReason, type OperationKey } from "@/lib/operation-rules";
 import { cn, formatDate, todayISO } from "@/lib/utils";
+import { isOthers, withRemark } from "@/lib/register-fields";
 
 type Meta = { title: string; description: string; icon: React.ElementType; perm: Permission; submit: string; tone: string };
 
@@ -108,9 +109,10 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
       if (kind === "VERIFY") {
         n.physicalLocationId ??= asset.locationId ?? "";
         n.assignedUser ??= asset.assignedTo ?? "";
+        n.assignedUserRemark ??= asset.assignedToRemark ?? "";
         n.condition ??= asset.condition ?? "";
       }
-      if (kind === "RETURN" && !n.returnedBy && asset.assignedTo) n.returnedBy = asset.assignedTo;
+      if (kind === "RETURN" && !n.returnedBy && (asset.staff || asset.assignedTo)) n.returnedBy = asset.staff?.name ?? withRemark(asset.assignedTo, asset.assignedToRemark) ?? "";
       if (kind === "RETURN" && !n.toLocationId) {
         const store = ref.locations.find((l) => /gear store/i.test(l.name));
         n.toLocationId = store?.id ?? asset.locationId ?? "";
@@ -155,13 +157,13 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
       let res: { ok: boolean; error?: string; fieldErrors?: Record<string, string> };
       switch (kind) {
         case "ISSUE":
-          res = await A.issueAction({ ...common, toLocationId: s("toLocationId"), staffId: staff?.id ?? null, assignedTo: staff ? null : s("assignedTo") || null, shift: s("shift") || null, department: s("department") || null });
+          res = await A.issueAction({ ...common, toLocationId: s("toLocationId"), locationRemark: s("locationRemark") || null, staffId: staff?.id ?? null, assignedTo: s("assignedTo") || null, assignedToRemark: s("assignedToRemark") || null, shift: s("shift") || null, department: s("department") || null });
           break;
         case "TRANSFER":
-          res = await A.transferAction({ ...common, toLocationId: s("toLocationId"), staffId: staff?.id ?? null, assignedTo: staff ? null : s("assignedTo") || null, shift: s("shift") || null, reason: s("reason") || null });
+          res = await A.transferAction({ ...common, toLocationId: s("toLocationId"), locationRemark: s("locationRemark") || null, staffId: staff?.id ?? null, assignedTo: s("assignedTo") || null, assignedToRemark: s("assignedToRemark") || null, shift: s("shift") || null, reason: s("reason") || null });
           break;
         case "RETURN":
-          res = await A.returnAction({ ...common, toLocationId: s("toLocationId"), returnedBy: s("returnedBy") || null, condition: s("condition") || null });
+          res = await A.returnAction({ ...common, toLocationId: s("toLocationId"), locationRemark: s("locationRemark") || null, returnedBy: s("returnedBy") || null, condition: s("condition") || null });
           break;
         case "REPAIR_OUT":
           res = await A.repairOutAction({ ...common, doneBy: s("sentBy") || common.doneBy, reportedProblem: s("reportedProblem"), condition: s("condition") || null, sentBy: s("sentBy") || null, technician: s("technician") || null, expectedReturnDate: s("expectedReturnDate") || null });
@@ -171,7 +173,7 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
           break;
         case "VERIFY":
           res = await A.verifyAction({
-            ...common, physicalLocationId: s("physicalLocationId") || null, assignedUser: s("assignedUser") || null, condition: s("condition") || null,
+            ...common, physicalLocationId: s("physicalLocationId") || null, assignedUser: (isOthers(s("assignedUser")) ? s("assignedUserRemark") || null : s("assignedUser")) || null, condition: s("condition") || null,
             devicePresent: b("devicePresent"), serialConfirmed: b("serialConfirmed"), assetNumberConfirmed: b("assetNumberConfirmed"), locationMatches: b("locationMatches"),
             assignmentMatches: b("assignmentMatches"), conditionChecked: b("conditionChecked"), result: s("result") as "VERIFIED", statusAfterId: s("statusAfterId") || null, updateRegister: b("updateRegister"),
           });
@@ -186,7 +188,7 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
           res = await A.osUpdateAction({ ...common, osVersion: s("osVersion") || null });
           break;
         case "REQUEST":
-          res = await A.requestAction({ type: s("requestType") as "TRANSFER", assetId: assetDbId!, toLocationId: s("toLocationId") || null, staffId: staff?.id ?? null, assignedTo: staff ? null : s("assignedTo") || null, shift: s("shift") || null, problem: s("problem") || null, notes: s("notes") || null });
+          res = await A.requestAction({ type: s("requestType") as "TRANSFER", assetId: assetDbId!, toLocationId: s("toLocationId") || null, locationRemark: s("locationRemark") || null, staffId: staff?.id ?? null, assignedTo: s("assignedTo") || null, assignedToRemark: s("assignedToRemark") || null, shift: s("shift") || null, problem: s("problem") || null, notes: s("notes") || null });
           break;
         case "MARK_DAMAGED": {
           const fd = new FormData();
@@ -215,7 +217,7 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
 
   const confirmText = () => {
     if (!asset) return "";
-    if (kind === "TRANSFER") return `Are you sure you want to transfer ${asset.assetId} from ${asset.location ?? "—"} to ${locName(s("toLocationId"))}?`;
+    if (kind === "TRANSFER") return `Are you sure you want to transfer ${asset.assetId} from ${withRemark(asset.location, asset.locationRemark) ?? "—"} to ${withRemark(locName(s("toLocationId")), s("locationRemark"))}?`;
     if (kind === "DISPOSE") return "Disposing an asset is a permanent inventory action. Continue?";
     return `Mark ${asset.assetId} as Lost? This will raise a notification to all inventory staff.`;
   };
@@ -229,6 +231,33 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
     <NativeSelect value={s(key)} onChange={(e) => set(key, e.target.value)} placeholder={placeholder} data-testid={`field-${key}`}>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </NativeSelect>
+  );
+  /** Location dropdown + its remark (required when "Others"). */
+  const locationWithRemark = (key: string, label: string, required = true, placeholder?: string) => {
+    const others = isOthers(locName(s(key)));
+    return (
+      <>
+        <Field label={label} required={required} error={errors[key]}>{locationSelect(key, placeholder)}</Field>
+        <Field label="Location remark" required={others} error={errors.locationRemark} hint={others ? "Where exactly?" : "Optional"}>{text("locationRemark")}</Field>
+      </>
+    );
+  };
+  const assignedWithRemark = (label: string, placeholder = "—", required = false) => {
+    const others = isOthers(s("assignedTo"));
+    return (
+      <>
+        <Field label={label} required={required} error={errors.assignedTo}>{listSelect("assignedTo", ref.assignedUnits, placeholder)}</Field>
+        <Field label="Assigned To remark" required={others} error={errors.assignedToRemark} hint={others ? "Who / which unit?" : "Optional"}>{text("assignedToRemark")}</Field>
+      </>
+    );
+  };
+  const staffField = (label: string, hint?: string) => (
+    <Field label={label} error={errors.staffId} hint={hint}>
+      <StaffPicker value={staff} onChange={(o: StaffOption | null) => {
+        setStaff(o);
+        if (o?.shift && ref.shifts.includes(o.shift)) set("shift", o.shift);
+      }} />
+    </Field>
   );
   const text = (key: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <Input value={s(key)} onChange={(e) => set(key, e.target.value)} data-testid={`field-${key}`} {...props} />
@@ -277,8 +306,8 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-4">
                     <div><div className="text-slate-400">Type</div><div className="font-medium text-slate-800">{asset.assetType}</div></div>
-                    <div><div className="text-slate-400">Current location</div><div className="font-medium text-slate-800" data-testid="current-location">{asset.location ?? "—"}</div></div>
-                    <div><div className="text-slate-400">Assigned to</div><div className="font-medium text-slate-800">{asset.assignedTo ?? "—"}{asset.staff && <span className="ml-1 font-mono text-[11px] font-normal text-muted-foreground">{asset.staff.employeeNumber}</span>}</div></div>
+                    <div><div className="text-slate-400">Current location</div><div className="font-medium text-slate-800" data-testid="current-location">{withRemark(asset.location, asset.locationRemark) ?? "—"}</div></div>
+                    <div><div className="text-slate-400">Assigned to</div><div className="font-medium text-slate-800">{withRemark(asset.assignedTo, asset.assignedToRemark) ?? "—"}{asset.staff && <div className="text-[11.5px] font-normal text-muted-foreground">Held by {asset.staff.name} · <span className="font-mono">{asset.staff.employeeNumber}</span></div>}</div></div>
                     <div><div className="text-slate-400">Serial / IMEI</div><div className="truncate font-mono font-medium text-slate-800">{asset.serial ?? "—"}</div></div>
                   </div>
                   {asset.openRepair && (
@@ -297,17 +326,9 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {kind === "ISSUE" && (
                     <>
-                      <Field label="From location"><Input value={asset.location ?? "—"} disabled /></Field>
-                      <Field label="To location" required error={errors.toLocationId}>{locationSelect("toLocationId")}</Field>
-                      <Field label="Issue to staff member" error={errors.staffId}>
-                        <StaffPicker value={staff} onChange={(o: StaffOption | null) => {
-                        setStaff(o);
-                        if (o?.shift && ref.shifts.includes(o.shift)) set("shift", o.shift);
-                      }} invalid={!!errors.assignedTo && !staff} />
-                      </Field>
-                      <Field label="Or assign to unit / shift" error={staff ? undefined : errors.assignedTo} hint={staff ? "Not needed — staff member selected" : "e.g. C Yard, B Tallies (when not issued to a person)"}>
-                        {text("assignedTo", { disabled: !!staff })}
-                      </Field>
+                      {locationWithRemark("toLocationId", "To location")}
+                      {assignedWithRemark("Assigned To", "Select unit…")}
+                      {staffField("Staff member (holder)", "Optional — the person taking the device")}
                       <Field label="Shift">{listSelect("shift", ref.shifts)}</Field>
                       <Field label="Department">{listSelect("department", ref.departments)}</Field>
                       {dateField()}
@@ -317,18 +338,9 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                   )}
                   {kind === "TRANSFER" && (
                     <>
-                      <Field label="Current location"><div className="flex h-9 items-center gap-1.5 rounded-md border bg-slate-50 px-3 text-sm"><MapPin className="size-3.5 text-slate-400" />{asset.location ?? "—"}</div></Field>
-                      <Field label="New location" required error={errors.toLocationId}>{locationSelect("toLocationId")}</Field>
-                      <Field label="Current assignee"><div className="flex h-9 items-center gap-1.5 rounded-md border bg-slate-50 px-3 text-sm"><User2 className="size-3.5 text-slate-400" />{asset.assignedTo ?? "—"}{asset.staff && <span className="font-mono text-xs text-muted-foreground">{asset.staff.employeeNumber}</span>}</div></Field>
-                      <Field label="New holder (staff member)">
-                        <StaffPicker value={staff} onChange={(o: StaffOption | null) => {
-                        setStaff(o);
-                        if (o?.shift && ref.shifts.includes(o.shift)) set("shift", o.shift);
-                      }} />
-                      </Field>
-                      <Field label="Or other assignee" hint={staff ? "Not needed — staff member selected" : "Leave both blank to keep the current assignee"}>
-                        {text("assignedTo", { placeholder: asset.assignedTo ?? "", disabled: !!staff })}
-                      </Field>
+                      {locationWithRemark("toLocationId", "New location")}
+                      {assignedWithRemark("New Assigned To", asset.assignedTo ? `Keep: ${asset.assignedTo}` : "—")}
+                      {staffField("New holder (staff member)", asset.staff ? `Leave blank to keep ${asset.staff.name}` : "Optional")}
                       <Field label="Shift">{listSelect("shift", ref.shifts)}</Field>
                       {dateField()}
                       <Field label="Reason">{text("reason")}</Field>
@@ -338,9 +350,8 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                   )}
                   {kind === "RETURN" && (
                     <>
-                      <Field label="Current location"><Input value={asset.location ?? "—"} disabled /></Field>
-                      <Field label="Return location" required error={errors.toLocationId}>{locationSelect("toLocationId")}</Field>
-                      <Field label="Returned by">{text("returnedBy", { placeholder: asset.assignedTo ?? "" })}</Field>
+                      {locationWithRemark("toLocationId", "Return location")}
+                      <Field label="Returned by">{text("returnedBy", { placeholder: asset.staff?.name ?? asset.assignedTo ?? "" })}</Field>
                       <Field label="Condition" hint="Damaged / Critical sets the status to Damaged">{listSelect("condition", ref.conditions)}</Field>
                       {dateField()}
                       <Field label="Received by">{text("doneBy")}</Field>
@@ -409,7 +420,8 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                         </NativeSelect>
                       </Field>
                       <Field label="Physical location">{locationSelect("physicalLocationId")}</Field>
-                      <Field label="Assigned user (found with)">{text("assignedUser")}</Field>
+                      <Field label="Assigned To (found with)">{listSelect("assignedUser", ref.assignedUnits)}</Field>
+                      {isOthers(s("assignedUser")) && <Field label="Assigned To remark">{text("assignedUserRemark")}</Field>}
                       <Field label="Physical condition">{listSelect("condition", ref.conditions)}</Field>
                       <Field label="Status after verification" hint={asset.statusCode === "UNVERIFIED" ? "Automatic: In Use if assigned, otherwise In Stock" : "Automatic: unchanged"}>
                         <NativeSelect value={s("statusAfterId")} onChange={(e) => set("statusAfterId", e.target.value)} placeholder="Automatic">
@@ -420,7 +432,7 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                         {([
                           ["devicePresent", "Device physically present"],
                           ["serialConfirmed", "Serial / IMEI matches"],
-                          ["assetNumberConfirmed", "Asset number matches"],
+                          ["assetNumberConfirmed", "IT Asset No. matches"],
                           ["locationMatches", "Location matches"],
                           ["assignmentMatches", "Assignment matches"],
                           ["conditionChecked", "Device condition checked"],
@@ -466,8 +478,8 @@ export function OperationDialog({ request, onClose }: { request: OperationReques
                       {s("requestType") !== "REPAIR" && <Field label="To location">{locationSelect("toLocationId")}</Field>}
                       {(s("requestType") === "ISSUE" || s("requestType") === "TRANSFER") && (
                         <>
-                          <Field label="Issue to staff member"><StaffPicker value={staff} onChange={(o) => setStaff(o)} /></Field>
-                          <Field label="Or other assignee">{text("assignedTo", { disabled: !!staff })}</Field>
+                          {assignedWithRemark("Assigned To", "Select unit…")}
+                          <Field label="Staff member"><StaffPicker value={staff} onChange={(o) => setStaff(o)} /></Field>
                         </>
                       )}
                       {s("requestType") === "REPAIR" && <Field label="Problem" required className="sm:col-span-2"><Textarea value={s("problem")} onChange={(e) => set("problem", e.target.value)} rows={2} /></Field>}

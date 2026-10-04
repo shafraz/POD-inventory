@@ -41,6 +41,8 @@ export function RequestsTable({ rows, reviewer, showAll }: { rows: Row[]; review
       prefill: {
         toLocationId: r.payload.toLocationId ?? undefined,
         assignedTo: r.payload.assignedTo ?? undefined,
+        assignedToRemark: r.payload.assignedToRemark ?? undefined,
+        locationRemark: r.payload.locationRemark ?? undefined,
         staffId: r.payload.staffId ?? undefined,
         shift: r.payload.shift ?? undefined,
         reportedProblem: r.payload.problem ?? undefined,

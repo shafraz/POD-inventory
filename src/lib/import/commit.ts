@@ -1,3 +1,4 @@
+import { canonicalAssignedTo, canonicalLocation, canonicalShift } from "@/lib/register-fields";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { parseTypeConfig } from "@/lib/asset-type-config";
@@ -58,7 +59,8 @@ export async function commitImport(staged: StagedImport, includeKeys: Set<string
       // Reference additions from the Lists sheet
       const add = staged.summary.referenceAdditions;
       for (const s of add.statuses) {
-        await tx.status.upsert({ where: { name: s }, create: { name: s, code: "CUSTOM", color: "gray", sortOrder: 90 }, update: {} });
+        if (await tx.status.findFirst({ where: { name: { equals: s, mode: "insensitive" } } })) continue;
+        await tx.status.create({ data: { name: s, code: "CUSTOM", color: "gray", sortOrder: 90 } });
         result.statusesCreated.push(s);
       }
       for (const v of add.simOperators) {
@@ -66,6 +68,7 @@ export async function commitImport(staged: StagedImport, includeKeys: Set<string
       }
 
       const locations = new Map((await tx.location.findMany()).map((l) => [l.name.toLowerCase(), l]));
+      // Register locations are MCH / THT / HMT / Others; anything else becomes Others + remark.
       const ensureLocation = async (name: string | null) => {
         if (!name) return null;
         const hit = locations.get(name.toLowerCase());
@@ -75,7 +78,6 @@ export async function commitImport(staged: StagedImport, includeKeys: Set<string
         result.locationsCreated.push(name);
         return created.id;
       };
-      for (const l of add.locations) await ensureLocation(l);
 
       const statuses = new Map((await tx.status.findMany()).map((s) => [s.name.toLowerCase(), s]));
       const unverified = [...statuses.values()].find((s) => s.code === "UNVERIFIED")!;
@@ -112,8 +114,11 @@ export async function commitImport(staged: StagedImport, includeKeys: Set<string
           result.skipped++;
           continue;
         }
-        const assetId = d.assetId ?? genId(type.prefix);
-        const locationId = await ensureLocation(d.locationName);
+        const rd = parseISODate(d.receivedDate);
+        const assetId = d.assetId ?? genId(`${type.prefix}-${String((rd ?? new Date()).getUTCFullYear() % 100).padStart(2, "0")}`);
+        const loc = canonicalLocation(d.locationName);
+        const locationId = await ensureLocation(loc.name);
+        const unit = canonicalAssignedTo(d.assignedTo);
         const status = statuses.get(d.statusName.toLowerCase()) ?? unverified;
         const lastVerified = parseISODate(d.lastVerified);
         const notes = reviewNotes(r);
@@ -131,8 +136,10 @@ export async function commitImport(staged: StagedImport, includeKeys: Set<string
           simOperator: d.simOperator,
           simNumber: d.simNumber,
           locationId,
-          assignedTo: d.assignedTo,
-          shift: d.shift,
+          locationRemark: loc.remark,
+          assignedTo: unit.value,
+          assignedToRemark: unit.remark,
+          shift: canonicalShift(d.shift),
           statusId: status.id,
           condition: d.condition,
           issuedDate: parseISODate(d.issuedDate),

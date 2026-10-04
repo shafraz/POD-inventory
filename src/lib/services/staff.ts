@@ -107,10 +107,6 @@ export async function saveStaff(input: StaffInput, user: CurrentUser) {
     const changes = Object.keys(labels)
       .filter((k) => String(before[k as keyof typeof before] ?? "") !== String(after[k as keyof typeof after] ?? ""))
       .map((k) => (k === "active" ? (after.active ? "reactivated" : "deactivated") : `${labels[k]} ${before[k as keyof typeof before] ?? "—"} → ${after[k as keyof typeof after] ?? "—"}`));
-    // Keep the "Assigned to" text on assets in step with a renamed staff member
-    if (before.name !== after.name) {
-      await prisma.asset.updateMany({ where: { staffId: after.id }, data: { assignedTo: after.name } });
-    }
     await auditEvent(prisma, user, {
       entityType: "Staff", entityId: after.id, action: "UPDATE",
       message: `Staff ${after.name} (${after.employeeNumber}) updated${changes.length ? `: ${changes.join("; ")}` : ""}`,

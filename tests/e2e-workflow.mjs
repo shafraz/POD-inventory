@@ -42,6 +42,18 @@ async function submitOp({ confirm = false } = {}) {
   await page.waitForSelector('[data-testid="operation-form"]', { state: "detached" });
   await page.waitForTimeout(700);
 }
+async function openStaff(emp) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.goto(`${BASE}/staff?q=${encodeURIComponent(emp)}`);
+    await page.waitForLoadState("networkidle");
+    await page.click('[data-testid="staff-row"]');
+    try {
+      await page.waitForSelector('[data-testid="staff-title"]', { timeout: 5000 });
+      return;
+    } catch {}
+  }
+  throw new Error(`Could not open staff ${emp}`);
+}
 const detail = async (id) => (await page.locator(`[data-testid="${id}"]`).innerText()).trim();
 
 try {
@@ -62,29 +74,36 @@ try {
   // 1–2. Add Tablet 10" at Container Yard
   await page.goto(`${BASE}/assets`);
   await page.click('[data-testid="add-asset"]');
-  await page.selectOption('[data-testid="asset-assetTypeId"]', { label: 'Tablet 10" (TAB10)' });
-  await page.waitForFunction(() => document.querySelector('[data-testid="next-asset-id"]')?.textContent?.startsWith("TAB10-"));
+  await page.selectOption('[data-testid="asset-assetTypeId"]', { label: 'Tablet 10" (Tab10)' });
+  await page.waitForFunction(() => /^Tab10-\d\d-\d{3}$/.test(document.querySelector('[data-testid="next-asset-id"]')?.textContent ?? ""));
+  await page.fill('[data-testid="asset-receivedDate"]', "2025-06-10");
+  await page.waitForFunction(() => document.querySelector('[data-testid="next-asset-id"]')?.textContent?.startsWith("Tab10-25-"));
   const expectedId = (await page.locator('[data-testid="next-asset-id"]').innerText()).trim();
   await page.fill('[data-testid="asset-deviceName"]', "COD TAB099");
   await page.fill('[data-testid="asset-brand"]', "Samsung");
   await page.fill('[data-testid="asset-model"]', "Galaxy Tab A9+");
   await page.fill('[data-testid="asset-imei"]', IMEI);
   await page.fill('[data-testid="asset-inventoryNumber"]', "MPL" + IMEI.slice(-6));
-  await page.selectOption('[data-testid="asset-locationId"]', { label: "Container Yard" });
-  await page.selectOption('[data-testid="asset-statusId"]', { label: "In Stock" });
-  await page.selectOption('[data-testid="asset-simOperator"]', { label: "Dhiraagu 10GB" });
+  await page.selectOption('[data-testid="asset-locationId"]', { label: "Others" });
+  await page.selectOption('[data-testid="asset-statusId"]', { label: "In stock" });
+  await page.selectOption('[data-testid="asset-simOperator"]', { label: "Ooredoo 20GB" });
+  await page.click('[data-testid="save-asset"]');
+  await page.waitForSelector("text=Required when location is Others");
+  ok("Validation: Others needs a location remark");
+  await page.fill('[data-testid="asset-locationRemark"]', "Container Yard");
+  await page.selectOption('[data-testid="asset-assignedTo"]', { label: "Gear Store" });
+  await page.selectOption('[data-testid="asset-shift"]', { label: "All morning" });
   await shot("02-add-asset");
   await page.click('[data-testid="save-asset"]');
   await page.waitForURL(`**/assets/${expectedId}`);
   const assetId = (await detail("asset-title"));
-  expect(assetId === expectedId, "1. Add new Tablet 10\"", `Generated ${assetId}`);
-  expect((await detail("detail-location")) === "Container Yard" && (await detail("detail-status")) === "In Stock", "2. Assigned to Container Yard (In Stock)");
+  expect(assetId === expectedId && /^Tab10-25-\d{3}$/.test(assetId), "1. Add new Tablet 10\" (ID uses year received)", `Generated ${assetId}`);
+  expect((await detail("detail-location")) === "Others" && (await detail("detail-status")) === "In stock", "2. Location Others – Container Yard (In stock)");
 
   // Duplicate IMEI is rejected
   await page.goto(`${BASE}/assets`);
   await page.click('[data-testid="add-asset"]');
-  await page.selectOption('[data-testid="asset-assetTypeId"]', { label: 'Tablet 10" (TAB10)' });
-  await page.fill('[data-testid="asset-deviceName"]', "Duplicate test");
+  await page.selectOption('[data-testid="asset-assetTypeId"]', { label: 'Tablet 10" (Tab10)' });
   await page.fill('[data-testid="asset-imei"]', IMEI);
   await page.click('[data-testid="save-asset"]');
   await page.waitForSelector("text=IMEI already used by");
@@ -96,26 +115,27 @@ try {
   await page.click('[data-testid="action-ISSUE"]');
   await page.waitForSelector('[data-testid="asset-summary"]');
   const summaryText = await page.locator('[data-testid="asset-summary"]').innerText();
-  expect(summaryText.includes("Container Yard") && summaryText.includes("In Stock"), "Movement form auto-displays current state", summaryText.replace(/\s+/g, " ").slice(0, 90));
-  await page.selectOption('[data-testid="field-toLocationId"]', { label: "Container Yard" });
-  await page.fill('[data-testid="field-assignedTo"]', "C Yard");
-  await page.selectOption('[data-testid="field-shift"]', { label: "C Shift" });
+  expect(summaryText.includes("Others – Container Yard") && summaryText.includes("In stock"), "Movement form auto-displays current state", summaryText.replace(/\s+/g, " ").slice(0, 90));
+  await page.selectOption('[data-testid="field-toLocationId"]', { label: "MCH" });
+  await page.selectOption('[data-testid="field-assignedTo"]', { label: "Tally" });
+  await page.selectOption('[data-testid="field-shift"]', { label: "C" });
   await shot("03-issue");
   await submitOp();
   await page.reload();
   await page.waitForSelector('[data-testid="asset-title"]');
-  expect((await detail("detail-status")) === "In Use" && (await detail("detail-assigned")) === "C Yard", "3. Issued to C Yard", `status ${await detail("detail-status")}`);
+  expect((await detail("detail-status")) === "In use" && (await detail("detail-assigned")) === "Tally" && (await detail("detail-location")) === "MCH", "3. Issued to Tally at MCH", `status ${await detail("detail-status")}`);
 
   // 4. Transfer to HMT (with confirmation)
   await page.click('[data-testid="action-TRANSFER"]');
   await page.waitForSelector('[data-testid="asset-summary"]');
   await page.selectOption('[data-testid="field-toLocationId"]', { label: "HMT" });
-  await page.fill('[data-testid="field-assignedTo"]', "HMT Operations");
+  await page.selectOption('[data-testid="field-assignedTo"]', { label: "Others" });
+  await page.fill('[data-testid="field-assignedToRemark"]', "HMT Operations");
   await page.fill('[data-testid="field-reason"]', "Additional tablet needed at HMT");
   await page.click('[data-testid="operation-submit"]');
   const confirmText = await page.locator("[role=alertdialog]").innerText();
   await shot("04-transfer-confirm");
-  expect(confirmText.includes(`transfer ${assetId} from Container Yard to HMT`), "Transfer confirmation dialog", confirmText.split("\n")[1]);
+  expect(confirmText.includes(`transfer ${assetId} from MCH to HMT`), "Transfer confirmation dialog", confirmText.split("\n")[1]);
   await page.click('[data-testid="confirm-button"]');
   await page.waitForSelector('[data-testid="operation-form"]', { state: "detached" });
   await page.reload();
@@ -144,7 +164,7 @@ try {
   await submitOp();
   await page.reload();
   await page.waitForSelector('[data-testid="asset-title"]');
-  expect((await detail("detail-status")) === "In Use", "6. Returned from repair (status restored to In Use)");
+  expect((await detail("detail-status")) === "In use", "6. Returned from repair (status restored to In use)");
 
   // 7. Verify
   await page.click('[data-testid="action-VERIFY"]');
@@ -214,7 +234,7 @@ try {
     await page.fill('[data-testid="staff-name"]', staffName);
     await page.fill('[data-testid="staff-employeeNumber"]', emp);
     await page.fill('[data-testid="staff-designation"]', "Tally Clerk");
-    await page.selectOption('[data-testid="staff-shift"]', { label: "B Shift" });
+    await page.selectOption('[data-testid="staff-shift"]', { label: "B" });
     await page.screenshot({ path: `${OUT}/staff-form.png` });
     await page.click('[data-testid="staff-save"]');
     await page.waitForSelector('[data-testid="staff-form"]', { state: "detached" });
@@ -235,18 +255,14 @@ try {
     await page.click('[data-testid="menu-RETURN"]');
     await page.waitForSelector('[data-testid="asset-summary"]');
     await submitOp();
-    await page.goto(`${BASE}/staff`);
-    await page.fill('[data-testid="staff-search"]', emp);
-    await page.waitForTimeout(800);
-    await page.click('[data-testid="staff-row"]');
-    await page.waitForSelector('[data-testid="staff-title"]');
+    await openStaff(emp);
     await page.click('[data-testid="issue-to-staff"]');
     await page.waitForSelector('[data-testid="staff-banner"]');
     await page.fill('[data-testid="asset-picker"]', assetId);
     await page.click('[data-testid="asset-option"]');
     await page.waitForSelector('[data-testid="asset-summary"]');
     await page.waitForSelector('[data-testid="picked-staff"]');
-    await page.selectOption('[data-testid="field-toLocationId"]', { label: "Container Yard" });
+    await page.selectOption('[data-testid="field-toLocationId"]', { label: "MCH" });
     await page.screenshot({ path: `${OUT}/staff-issue.png` });
     await submitOp();
     await page.reload();
@@ -255,17 +271,13 @@ try {
     expect(held.includes(assetId), "Staff: device issued to staff member shows as held", assetId);
     await page.screenshot({ path: `${OUT}/staff-detail.png`, fullPage: true });
     await page.goto(`${BASE}/assets/${assetId}`);
-    const assigned = await detail("detail-assigned");
+    const assigned = await detail("detail-holder");
     expect(assigned.includes(staffName) && assigned.includes(emp), "Staff: asset shows holder with employee number", assigned);
     // global search by employee number finds the device
     const sr = await page.request.get(`${BASE}/api/search?q=${emp}`);
     expect((await sr.json()).results.some((r) => r.assetId === assetId), "Staff: search by employee number finds held device");
     // return from the staff page
-    await page.goto(`${BASE}/staff`);
-    await page.fill('[data-testid="staff-search"]', emp);
-    await page.waitForTimeout(800);
-    await page.click('[data-testid="staff-row"]');
-    await page.waitForSelector('[data-testid="staff-title"]');
+    await openStaff(emp);
     await page.click('[data-testid="return-device"]');
     await page.waitForSelector('[data-testid="asset-summary"]');
     await submitOp();

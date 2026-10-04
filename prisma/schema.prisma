@@ -91,6 +91,7 @@ enum LookupCategory {
   SHIFT
   SIM_OPERATOR
   BRAND
+  ASSIGNED_TO
 }
 
 enum RecordSource {
@@ -266,10 +267,15 @@ model Asset {
   simOperator          String?   @map("sim_operator")
   locationId           String?   @map("location_id")
   location             Location? @relation(fields: [locationId], references: [id])
+  /// Free-text detail for the location (required when the location is "Others")
+  locationRemark       String?   @map("location_remark")
   /// Staff member currently holding the asset (null when assigned to a unit/shift or in stock)
   staffId              String?   @map("staff_id")
   staff                Staff?    @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  /// Unit the asset is assigned to (Tally, Forman, Duty IC… or "Others")
   assignedTo           String?   @map("assigned_to")
+  /// Free-text detail for the assignment (required when Assigned To is "Others")
+  assignedToRemark     String?   @map("assigned_to_remark")
   department           String?
   shift                String?
   statusId             String    @map("status_id")
