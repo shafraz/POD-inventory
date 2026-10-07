@@ -218,18 +218,6 @@ export function AssetFormDialog({ open, onOpenChange, initial }: { open: boolean
               <Field label="Last service date">{inp("lastServiceDate", { type: "date" })}</Field>
               <Field label="Next verification date" hint="Set automatically when the asset is verified">{inp("nextVerificationDate", { type: "date" })}</Field>
             </FormSection>
-
-            <FormSection title="Other">
-              <Field label={labelFor(cfg, "deviceName")} hint="Optional local name / code" error={errors.deviceName}>{inp("deviceName")}</Field>
-              <Field label={labelFor(cfg, "alternateReference")}>{inp("alternateReference")}</Field>
-              <Field label="Department">{sel("department", ref.departments)}</Field>
-              <Field label="Attachment / photo" hint="Image or PDF, max 5 MB">
-                <Input type="file" accept="image/*,application/pdf" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
-              </Field>
-              <Field label="Remarks" className="sm:col-span-2">
-                <Textarea value={v.remarks} onChange={(e) => set("remarks", e.target.value)} rows={2} data-testid="asset-remarks" />
-              </Field>
-            </FormSection>
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
